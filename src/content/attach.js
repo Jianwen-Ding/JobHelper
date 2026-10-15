@@ -301,6 +301,75 @@ function saysWhat(input) {
  */
 const OTHER_FIELDS = 'input:not([type="hidden"]):not([type="file"]), select, textarea';
 
+/*
+ * A choice among documents the site already has, which is not a field.
+ *
+ * LinkedIn's Easy Apply draws the Resume step as a list of the resumes
+ * uploaded before — each a card with the file's name, the date it was last
+ * used, a download button and a radio drawn as a circle — and the "Upload
+ * resume" button with the real input under the list. Those radios are how the
+ * widget says which upload goes with this application: they are part of the
+ * upload control, not a question of the form's. Read as fields, they walled
+ * the input off from everything above it, so a chip let go of anywhere on the
+ * list — the biggest thing in the section and the obvious place to aim — was
+ * "no upload box where you dropped it"; and every card has "upload" in its
+ * class, so a drop on a card went to the card as a drop area and came back
+ * "went to this form's drop area, which does not say whether it took it",
+ * about a card that has no drop handler at all.
+ *
+ * Told by what the choice says: a radio or checkbox whose own option — the
+ * nearest few ancestors that hold no other choice and no upload box — names a
+ * file. "Yes" and "No" never do.
+ */
+const NAMES_A_FILE = /[^\s\\/]\.(pdf|docx?|odt|rtf|txt|pages)\b/i;
+
+function optionOf(input) {
+  if (!(input instanceof HTMLInputElement) || !/^(radio|checkbox)$/.test(input.type)) return null;
+  const own = `${input.getAttribute('aria-label') ?? ''} ${input.labels ? [...input.labels].map(textOf).join(' ') : ''}`;
+  if (NAMES_A_FILE.test(own)) return input.parentElement ?? input;
+  for (let holder = input.parentElement, up = 0; holder && up < 4; holder = holder.parentElement, up++) {
+    if (holder.matches?.('form, body, html, dialog, [role="dialog"]')) return null;
+    if (holder.querySelector('input[type="file"]')) return null;
+    if ([...holder.querySelectorAll('input[type="radio"], input[type="checkbox"]')].some((x) => x !== input)) return null;
+    if (NAMES_A_FILE.test(`${holder.getAttribute('aria-label') ?? ''} ${textOf(holder)}`)) return holder;
+  }
+  return null;
+}
+
+const choosesADocument = (input) => Boolean(optionOf(input));
+
+/** Whether a region has a field in it that is somewhere to type or choose. */
+const holdsAField = (region) =>
+  [...(region.querySelectorAll?.(OTHER_FIELDS) ?? [])].some((field) => !choosesADocument(field));
+
+/*
+ * The upload widget around a box, wider than `sectionOf`: the documents it
+ * offers to choose between as well, which is where LinkedIn draws a new
+ * upload. Bounded as the rest are — never the form, a dialog, a region with
+ * a real field in it or another box.
+ */
+function widgetOf(box) {
+  let widget = null;
+  for (let holder = box.parentElement, up = 0; holder && up < 6; holder = holder.parentElement, up++) {
+    if (holder.matches?.('form, body, html, dialog, [role="dialog"]')) break;
+    if (holder.querySelectorAll('input[type="file"]').length > 1) break;
+    if (holdsAField(holder)) break;
+    widget = holder;
+  }
+  return widget;
+}
+
+/** How many times this file's name is shown, as a whole name, in `text`. */
+function timesNamed(text, name) {
+  let n = 0;
+  for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
+    const before = at > 0 ? text[at - 1] : '';
+    const rest = text.slice(at + name.length, at + name.length + 2);
+    if (!/[\w.-]/.test(before) && !/^([\w-]|\.\w)/.test(rest)) n += 1;
+  }
+  return n;
+}
+
 function sectionOf(box) {
   let section = null;
   for (let holder = box.parentElement, up = 0; holder && up < 4; holder = holder.parentElement, up++) {
@@ -337,6 +406,12 @@ function names(text, name) {
  * shown as a refusal is not one it holds — see `shownIn`.
  */
 function alreadyShown(box, name) {
+  /*
+   * Not the list of earlier uploads that LinkedIn draws beside its box: the
+   * one selected there may well carry this name — the store reuses it from
+   * one application to the next — and be last month's version, tailored for
+   * somebody else. Uploading again is what puts this one in. See `widgetOf`.
+   */
   const section = sectionOf(box);
   if (!section?.isConnected) return false;
   return readShown(section, name) === 'kept';
@@ -596,6 +671,18 @@ async function putIn(box, file, { alongside = false, ours } = {}) {
       box.parentElement,
     sectionOf(box),
   ].filter(Boolean);
+  /*
+   * And how often the name is already shown across the whole widget, the
+   * list of earlier uploads included, so that a *new* one can be told from
+   * an old one. LinkedIn takes the file, empties the box, and draws the
+   * upload as a new card at the top of its list of resumes — outside both
+   * places above. Read only there, that was "the page would not let that
+   * box take a file" over a resume LinkedIn had just uploaded and selected.
+   * Counted rather than looked for, because that list routinely already
+   * holds a file of the same name from an earlier application.
+   */
+  const widget = widgetOf(box);
+  const grew = widget ? { widget, before: timesNamed(textOf(widget), file.name) } : null;
   box.dispatchEvent(new Event('input', { bubbles: true }));
   box.dispatchEvent(new Event('change', { bubbles: true }));
   /*
@@ -627,7 +714,7 @@ async function putIn(box, file, { alongside = false, ours } = {}) {
    * and a red message. A name inside something marked as an error or an
    * alert is a refusal.
    */
-  return (await shownIn(homes, file.name)) === 'kept';
+  return (await shownIn(homes, file.name, grew)) === 'kept';
 }
 
 /**
@@ -664,9 +751,14 @@ function readShown(home, name) {
  * Several places, read together: a refusal anywhere wins, then the name
  * anywhere, then an upload still running anywhere.
  */
-async function shownIn(homes, name) {
+async function shownIn(homes, name, grew = null) {
   const read = () => {
     const seen = homes.map((home) => readShown(home, name));
+    // A new mention of it in the widget: kept, unless what mentions it is a refusal. See `putIn`.
+    if (grew?.widget.isConnected) {
+      if (readShown(grew.widget, name) === 'refused') seen.push('refused');
+      else if (timesNamed(textOf(grew.widget), name) > grew.before) seen.push('kept');
+    }
     for (const answer of ['refused', 'kept', 'uploading', 'nothing']) if (seen.includes(answer)) return answer;
     return 'gone';
   };
@@ -729,8 +821,15 @@ const DROP_WORDS = /\b(drag|drop|dropzone|attach|upload)\b/i;
 
 /** A region that behaves like a drop target, for a file with no box to go in. */
 function dropZones(root = document) {
+  /*
+   * Not a card in a list of documents to choose between, nor the list. Every
+   * one of LinkedIn's is classed `jobs-document-upload-redesign-card…`, and
+   * none of them takes a drop: see `optionOf`.
+   */
+  const options = deepAll('input[type="radio"], input[type="checkbox"]', root).map(optionOf).filter(Boolean);
   const found = deepAll('div,section,label,form', root).filter((el) => {
     if (!el.isConnected || el.closest('[hidden]')) return false;
+    if (options.some((o) => o.contains(el) || el.contains(o)) && !el.querySelector('input[type="file"]')) return false;
     /*
      * `className` is not a string on an SVG element — it is an
      * `SVGAnimatedString`, which stringifies to `[object SVGAnimatedString]`
@@ -1107,6 +1206,12 @@ export async function attachFiles(files) {
  * inside a drop zone. So it is walked outwards to the nearest thing that
  * takes files, and only then outwards to the page as a whole.
  */
+/** A button that moves a form along, rather than one that belongs to a field. */
+const MOVES_ON = /^(next|back|previous|continue|review|submit|submit application|apply|send|save and continue)$/i;
+const movesOn = (button) =>
+  MOVES_ON.test((button.value || textOf(button)).replace(/\s+/g, ' ').trim()) ||
+  MOVES_ON.test((button.getAttribute('aria-label') ?? '').replace(/ to (the )?(next|previous) step$/i, '').trim());
+
 export async function dropOnto(target, files) {
   const placed = [];
   const unplaced = [];
@@ -1131,18 +1236,37 @@ export async function dropOnto(target, files) {
    * something else, at a drop zone, and at the form itself.
    */
   const OTHER_FIELD = 'input:not([type="hidden"]):not([type="file"]), select, textarea';
+  /*
+   * A field, unless it is one of the upload widget's own choices between
+   * documents — LinkedIn's list of earlier resumes, each with a radio. See
+   * `optionOf`: a drop on that list is a drop on the resume's upload.
+   */
+  const aField = (el) => Boolean(el) && !choosesADocument(el);
   const near = (el) => {
-    if (el?.closest?.(OTHER_FIELD)) return null;
-    if (el instanceof HTMLLabelElement && el.control && el.control.type !== 'file') return null;
+    if (aField(el?.closest?.(OTHER_FIELD))) return null;
+    if (el instanceof HTMLLabelElement && el.control && el.control.type !== 'file' && aField(el.control)) return null;
     for (let at = el; at; at = at.parentElement ?? at.getRootNode?.()?.host) {
       if (at instanceof HTMLInputElement && at.type === 'file' && boxes.includes(at)) return at;
-      if (at instanceof HTMLLabelElement && at.control) return boxes.includes(at.control) ? at.control : null;
-      // The form, or the page: the whole of it is not one upload widget.
-      if (at.matches?.('form, body, html, dialog')) return null;
+      if (at instanceof HTMLLabelElement && at.control) {
+        if (at.control.type === 'file') return boxes.includes(at.control) ? at.control : null;
+        if (aField(at.control)) return null;
+      }
+      /*
+       * The form, or the page: the whole of it is not one upload widget. Nor
+       * a dialog — LinkedIn's Easy Apply is a `div[role=dialog]`, not a
+       * `<dialog>` — nor anything holding a whole form, nor anything holding
+       * the buttons that move the form along: the footer under Easy Apply's
+       * step reaches, two levels up, a region with one upload box in it and
+       * nothing else, and a chip let go of over Next is not a resume aimed at
+       * the Resume section.
+       */
+      if (at.matches?.('form, body, html, dialog, [role="dialog"], [aria-modal="true"]')) return null;
+      if (at.querySelector?.('form')) return null;
+      if ([...(at.querySelectorAll?.('button, [role="button"], input[type="submit"]') ?? [])].some(movesOn)) return null;
       const inside = [...(at.querySelectorAll?.('input[type="file"]') ?? [])].filter((b) => boxes.includes(b));
       if (inside.length > 1) return null;
       // A region with other fields in it is a part of the form, not the box's.
-      if (at.querySelector?.(OTHER_FIELD)) return null;
+      if ([...(at.querySelectorAll?.(OTHER_FIELD) ?? [])].some(aField)) return null;
       if (inside.length === 1) return inside[0];
       if (zones.includes(at)) return null;
     }

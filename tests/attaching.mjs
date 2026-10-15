@@ -22,6 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { findChromium } from './fixtures.mjs';
+import { easyApply, AIM } from './linkedin-easy-apply.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -639,6 +640,11 @@ async function main() {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    if (url === '/linkedin') {
+      const o = new URLSearchParams(req.url.split('?')[1] ?? '');
+      res.end(easyApply({ shadow: o.has('shadow'), cover: o.has('cover'), clears: o.has('clears') }));
+      return;
+    }
     if (url === '/workday-list') {
       res.end(WORKDAY_LIST(req.url.split('?')[1] ?? ''));
       return;
@@ -1660,6 +1666,116 @@ async function main() {
         return names.map((n) => m.kindOf(n));
       }, { b: base, names: [`${role}-Cover-Letter.pdf`, `${role}-Resume.pdf`, 'Resume-Writer-Cover-Letter.pdf'] });
       check('each reads as the kind its name ends with', JSON.stringify(kinds) === '["letter","resume","letter"]', JSON.stringify(kinds));
+    }
+
+    /* ---------------------------------------------------------------- *
+     * LinkedIn Easy Apply, at the resume step                            *
+     * ---------------------------------------------------------------- */
+    /*
+     * Reported as "doesn't really work". The Resume section is a list of the
+     * resumes uploaded before — a card each, with a radio drawn as a circle —
+     * and the Upload resume button with a `display:none` input under it; on
+     * LinkedIn since 2025 the whole modal is in an open shadow root. A drop
+     * on the list was "no upload box where you dropped it" (its radios read
+     * as fields and walled the input off) or, on a card, a drop on a card
+     * that has no drop handler, reported "went to this form's drop area"
+     * with nothing uploaded. See tests/linkedin-easy-apply.mjs.
+     */
+    const onLinkedIn = async (query, aim, files) => {
+      await p.goto(`${base}/linkedin?${query}`, { waitUntil: 'domcontentloaded' });
+      return p.evaluate(
+        async ({ b, sel, list }) => {
+          const m = await import(`${b}/attach.js`);
+          const report = sel ? await m.dropOnto(window.$ea(sel), list) : await m.attachFiles(list);
+          // LinkedIn's upload takes a moment before the new card is drawn.
+          await new Promise((r) => setTimeout(r, 500));
+          const root = document.getElementById('interop-outlet')?.shadowRoot ?? document;
+          const inBoxes = {};
+          for (const input of root.querySelectorAll('input[type=file]')) {
+            inBoxes[input.id.replace('jobs-document-upload-file-input-upload-', '')] = [...(input.files ?? [])].map((f) => f.name);
+          }
+          const selected = root.querySelector('[data-list="resume"] [aria-checked="true"] .jobs-document-upload-redesign-card__file-name')?.textContent ?? null;
+          return { report, inBoxes, uploads: window.linkedin.uploads, selected };
+        },
+        { b: base, sel: aim ? AIM[aim] : null, list: files },
+      );
+    };
+    const RESUME = 'Jianwen-Ding-Resume.pdf';
+    const TRANSCRIPT = 'UVA_Unofficial_Transcript.pdf';
+
+    for (const [variant, query] of [['in the page', ''], ['in a shadow root', 'shadow']]) {
+      for (const [aim, words] of [
+        ['button', 'on the Upload resume button'],
+        ['card', 'on a resume uploaded before'],
+        ['circle', 'on the round selector of a resume uploaded before'],
+        ['section', 'on empty space in the Resume section'],
+        ['heading', 'on the Resume heading'],
+      ]) {
+        group(`LinkedIn Easy Apply ${variant}: the resume chip let go of ${words}`);
+        const { report, inBoxes, uploads, selected } = await onLinkedIn(query, aim, [filed(RESUME)]);
+        check('it goes in the resume box', JSON.stringify(inBoxes.resume) === `["${RESUME}"]`, JSON.stringify(inBoxes));
+        check('and LinkedIn takes it and selects it', uploads[0]?.name === RESUME && selected === RESUME, JSON.stringify({ uploads, selected }));
+        check(
+          'reported as attached, not as a drop that may not have taken',
+          report.placed.length === 1 && report.placed[0].sure !== false && report.unplaced.length === 0,
+          JSON.stringify(report),
+        );
+      }
+      for (const [aim, words] of [['footer', 'on the footer'], ['next', 'on the Next button']]) {
+        group(`LinkedIn Easy Apply ${variant}: let go of ${words}`);
+        const { report, inBoxes, uploads } = await onLinkedIn(query, aim, [filed(RESUME)]);
+        check('nothing goes in', (inBoxes.resume ?? []).length === 0 && uploads.length === 0, JSON.stringify({ inBoxes, uploads }));
+        check(
+          'and it is said as not placed',
+          report.placed.length === 0 && /no upload box where you dropped it/.test(report.unplaced[0]?.why ?? ''),
+          JSON.stringify(report),
+        );
+      }
+    }
+
+    group('LinkedIn Easy Apply: the all-files chip let go of on the list of resumes');
+    {
+      const { report, inBoxes } = await onLinkedIn('cover', 'card', [filed(TRANSCRIPT), filed(RESUME)]);
+      check('the resume goes in the resume box', JSON.stringify(inBoxes.resume) === `["${RESUME}"]`, JSON.stringify(inBoxes));
+      check('and the cover-letter box is left alone', (inBoxes['cover-letter'] ?? []).length === 0, JSON.stringify(inBoxes));
+      check(
+        'the transcript is said to have had no place there, not "placed, not sure"',
+        report.placed.length === 1 && /for the resume/.test(report.unplaced.find((u) => u.name === TRANSCRIPT)?.why ?? ''),
+        JSON.stringify(report),
+      );
+    }
+
+    group('LinkedIn Easy Apply: the resume let go of on the cover-letter section');
+    {
+      const { report, inBoxes } = await onLinkedIn('cover', 'coverButton', [filed(RESUME)]);
+      check('it is not put in the cover-letter box', (inBoxes['cover-letter'] ?? []).length === 0 && (inBoxes.resume ?? []).length === 0, JSON.stringify(inBoxes));
+      check('and it says whose box that is', /cover letter/.test(report.unplaced[0]?.why ?? ''), JSON.stringify(report));
+    }
+
+    /*
+     * And when LinkedIn empties its input once it has the file — the new card
+     * at the top of the list is the only sign it was taken. Read only beside
+     * the input, that was "the page would not let that box take a file" over
+     * a resume LinkedIn had just uploaded and selected.
+     */
+    for (const aim of ['button', 'card']) {
+      group(`LinkedIn Easy Apply, emptying its input after an upload: let go of on the ${aim === 'card' ? 'list' : 'Upload button'}`);
+      const { report, uploads, selected } = await onLinkedIn('shadow&cover&clears', aim, [filed(RESUME)]);
+      check('LinkedIn takes it and selects it', uploads[0]?.name === RESUME && selected === RESUME, JSON.stringify({ uploads, selected }));
+      check('and it is reported as attached', report.placed.length === 1 && report.placed[0].sure !== false, JSON.stringify(report));
+    }
+
+    for (const query of ['', 'shadow&cover', 'shadow&cover&clears']) {
+      group(`LinkedIn Easy Apply: Attach files pressed (${query || 'in the page'})`);
+      const { report, inBoxes, uploads, selected } = await onLinkedIn(query, null, [filed(RESUME), filed(TRANSCRIPT)]);
+      check('the resume is uploaded and selected', uploads.map((u) => u.name).join() === RESUME && selected === RESUME, JSON.stringify({ uploads, selected }));
+      check('and nothing goes in the cover-letter box', (inBoxes['cover-letter'] ?? []).length === 0, JSON.stringify(inBoxes));
+      check(
+        'reported as attached, and not as already there',
+        report.placed.length === 1 && report.placed[0].name === RESUME && !report.placed[0].already && report.placed[0].sure !== false,
+        JSON.stringify(report),
+      );
+      check('the transcript is said to have nowhere to go', report.unplaced[0]?.name === TRANSCRIPT, JSON.stringify(report.unplaced));
     }
 
     group('Reading a name for what kind of document it is');

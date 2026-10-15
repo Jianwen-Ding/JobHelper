@@ -1135,6 +1135,23 @@
       },
       true,
     );
+    /*
+     * And again once the page has had its say, because the last word on
+     * `dropEffect` is the one the browser goes by. LinkedIn refuses drops
+     * everywhere but on its upload control — a `dragover` handler of its own
+     * that sets `dropEffect = 'none'`, so that a file let go of by mistake
+     * does not navigate the tab — and that ran after the capture above and
+     * undid it: the browser then refused the drop, no `drop` event came, and
+     * a chip let go of over the list of resumes did nothing at all, with
+     * nothing on the card to say so. Measured with a real pointer: of four
+     * drops on the Easy Apply step only the one on the Upload button arrived.
+     * The window is the last place a `dragover` goes.
+     */
+    window.addEventListener('dragover', (event) => {
+      if (!inTheAir || carriesFiles(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    });
     document.addEventListener(
       'drop',
       (event) => {
