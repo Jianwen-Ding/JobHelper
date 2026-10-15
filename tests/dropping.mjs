@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { serveFixtures, findChromium, extensionWorker } from './fixtures.mjs';
 import { EMBEDDED_APPLY, FRAME_DOCUMENTS } from './ats-web.mjs';
+import { easyApply, AIM } from './linkedin-easy-apply.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -35,8 +36,41 @@ const group = (name) => console.log(`\n${name}`);
 
 const OURS = { name: 'Morgan-Testwell-Resume.pdf', base64: btoa('%PDF-1.4 ours'), type: 'application/pdf' };
 
+/*
+ * LinkedIn's Easy Apply resume step, with LinkedIn's own drag handling, in a
+ * frame under a page holding a chip-shaped drag source: what a real pointer
+ * does there is the question, so a real pointer does it. In a frame because
+ * a frame's drop is armed through the worker, which needs no card and no
+ * server; the listener that takes the drop is the same one the top document
+ * runs. The step carries its contact section so the frame passes the
+ * application-form guard a frame has to pass. See tests/linkedin-easy-apply.mjs.
+ */
+const LINKEDIN = ['plain', 'shadow'].flatMap((v) => [
+  {
+    name: `linkedin-top-${v}`,
+    path: `/li/top-${v}`,
+    html: `<!doctype html><html><head><meta charset="utf-8"><title>Easy Apply</title></head>
+<body style="margin:0;display:flex">
+  <iframe src="/li/frame-${v}" title="Easy Apply" style="width:1000px;height:880px;border:0"></iframe>
+  <div id="chip" draggable="true" style="margin:40px 10px;padding:8px 12px;background:#eef;border-radius:12px;height:20px">Morgan-Testwell-Resume.pdf</div>
+  <script>
+    // What the card's chip does at dragstart: a copy, and its name as text.
+    chip.addEventListener('dragstart', (e) => {
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('text/plain', 'Morgan-Testwell-Resume.pdf');
+    });
+  </script>
+</body></html>`,
+  },
+  {
+    name: `linkedin-frame-${v}`,
+    path: `/li/frame-${v}`,
+    html: easyApply({ shadow: v === 'shadow', guard: true, contact: true }),
+  },
+]);
+
 async function main() {
-  const fixtures = await serveFixtures([EMBEDDED_APPLY, ...FRAME_DOCUMENTS]);
+  const fixtures = await serveFixtures([EMBEDDED_APPLY, ...FRAME_DOCUMENTS, ...LINKEDIN]);
   const context = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'jh-dropping-')), {
     executablePath: findChromium(),
     headless: true,
@@ -54,7 +88,7 @@ async function main() {
     await frame.waitForSelector('input[type=file]', { state: 'attached' });
 
     /** Arm the frame's drop, as the worker does when a chip is picked up. */
-    const arm = async (files) => {
+    const arm = async (files, url = fixtures.urlFor(EMBEDDED_APPLY)) => {
       for (let i = 0; i < 50; i++) {
         const answer = await worker.evaluate(
           async ([u, files]) => {
@@ -125,6 +159,77 @@ async function main() {
       // And the stale arm is let go of: a plain drop afterwards is the page's.
       const after = await dropOnBox(false);
       check('the stale arm is cleared', !after.dropCancelled && !after.held.includes(OURS.name), JSON.stringify(after));
+    }
+
+    /*
+     * LinkedIn's Easy Apply, at the resume step, with a real pointer.
+     *
+     * Reported as "doesn't really work", and it did not, for two reasons
+     * stacked. LinkedIn refuses a drop anywhere but on its upload control
+     * (`dropEffect = 'none'` from a `dragover` of its own, after ours), so
+     * the browser never delivered the drop at all; and where it did arrive,
+     * the list of earlier resumes read as fields and as drop areas, so the
+     * file went nowhere or to a card with no drop handler. Let go of over the
+     * Upload button, a previous resume's card, the section's empty space and
+     * the footer — in the page, and with the modal in a shadow root.
+     */
+    for (const variant of ['plain', 'shadow']) {
+      group(`LinkedIn Easy Apply (${variant}): a chip let go of over the resume step`);
+      const top = await context.newPage();
+      await top.setViewportSize({ width: 1240, height: 900 });
+      const topUrl = fixtures.urlFor(LINKEDIN.find((f) => f.path === `/li/top-${variant}`));
+      await top.goto(topUrl, { waitUntil: 'domcontentloaded' });
+      const liFrame = await (await top.waitForSelector('iframe')).contentFrame();
+      await liFrame.waitForFunction(() => Boolean(window.$ea?.('input[type=file]')));
+
+      const letGoOver = async (aim) => {
+        // A fresh step each time, so one drop's upload cannot answer for the next.
+        await liFrame.goto(liFrame.url(), { waitUntil: 'load' });
+        await liFrame.waitForFunction(() => Boolean(window.$ea?.('input[type=file]')));
+        const armed = await arm([OURS], topUrl);
+        const frameAt = await (await top.$('iframe')).boundingBox();
+        const to = await liFrame.evaluate((sel) => {
+          const r = window.$ea(sel).getBoundingClientRect();
+          return { x: r.x + Math.min(r.width / 2, 40), y: r.y + Math.min(r.height / 2, 12) };
+        }, AIM[aim]);
+        const from = await top.locator('#chip').boundingBox();
+        await top.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+        await top.mouse.down();
+        const end = { x: frameAt.x + to.x, y: frameAt.y + to.y };
+        for (let i = 1; i <= 14; i++) {
+          await top.mouse.move(from.x + ((end.x - from.x) * i) / 14, from.y + ((end.y - from.y) * i) / 14);
+          await top.waitForTimeout(25);
+        }
+        await top.mouse.up();
+        // Long enough for `dropOnto`, LinkedIn's "upload" and its new card.
+        await top.waitForTimeout(1200);
+        return {
+          armed,
+          ...(await liFrame.evaluate(() => ({
+            held: [...(window.$ea('#jobs-document-upload-file-input-upload-resume').files ?? [])].map((f) => f.name),
+            uploads: window.linkedin.uploads.map((u) => u.name),
+            selected: window.$ea('[data-list="resume"] [aria-checked="true"] .jobs-document-upload-redesign-card__file-name')?.textContent ?? null,
+            complaint: window.$ea('.jobs-document-upload__error')?.textContent ?? null,
+          }))),
+        };
+      };
+
+      for (const [aim, words] of [
+        ['button', 'the Upload resume button'],
+        ['card', 'a resume uploaded before'],
+        ['circle', 'the round selector of a resume uploaded before'],
+        ['section', 'the empty space in the Resume section'],
+      ]) {
+        const r = await letGoOver(aim);
+        check(`${words}: the resume goes into the resume box`, r.armed && r.held[0] === OURS.name, JSON.stringify(r));
+        check(`${words}: and LinkedIn takes it and selects it`, r.uploads[0] === OURS.name && r.selected === OURS.name, JSON.stringify(r));
+        check(`${words}: with no complaint from LinkedIn's own drop handler`, r.complaint === null, String(r.complaint));
+      }
+      {
+        const r = await letGoOver('footer');
+        check('the footer under Back and Next: nothing goes in', r.armed && r.held.length === 0 && r.uploads.length === 0, JSON.stringify(r));
+      }
+      await top.close();
     }
   } finally {
     await context.close();

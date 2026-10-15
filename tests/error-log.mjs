@@ -21,7 +21,25 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { findChromium } from './fixtures.mjs';
 
-const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const realRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/*
+ * A copy of the extension that may run scripts in a tab, as tests/csp.mjs
+ * makes one: the card's way to the form is a message from the content
+ * script, and only `chrome.scripting` reaches the content script's isolated
+ * world — in the top frame, and in a frame of the page — to send it as the
+ * card would, and as something in a frame would try to. Everything else is
+ * the extension as it is.
+ */
+function withScripting() {
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-error-log-ext-'));
+  for (const part of ['src', 'vendor', 'icons']) fs.cpSync(path.join(realRoot, part), path.join(copy, part), { recursive: true });
+  const manifest = JSON.parse(fs.readFileSync(path.join(realRoot, 'manifest.json'), 'utf8'));
+  manifest.permissions = [...new Set([...(manifest.permissions ?? []), 'scripting'])];
+  fs.writeFileSync(path.join(copy, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  return copy;
+}
+const extensionRoot = withScripting();
 const PNG_BYTES = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82];
 const PNG = `data:image/png;base64,${Buffer.from(PNG_BYTES).toString('base64')}`;
 
@@ -62,6 +80,15 @@ function fakeStore() {
       };
       if (state.broken.has(url)) return send({ error: 'broken on purpose' }, 500);
       if (url === '/api/error-log' && req.method === 'POST' && state.refuse) return send({ error: state.refuse }, 400);
+      // A page with a frame in it, for the card's way to the form.
+      if (url === '/apply') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        return res.end('<!doctype html><title>Apply</title><h1>Apply</h1><iframe src="/apply-frame"></iframe>');
+      }
+      if (url === '/apply-frame') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        return res.end('<!doctype html><title>Frame</title><form><input name="email"></form>');
+      }
       if (url === '/health') return send({ ok: true, projectOpen: true, ai: { enabled: false, configured: false, command: '' } });
       if (url === '/api/extension/pair') return send({ token: 'fake-token', origin: req.headers.origin });
       if (url === '/api/resumes') return send([{ id: 'newgrad', label: 'New grad', base: true }]);
@@ -351,10 +378,118 @@ async function main() {
       check('and the note is used up', cleared === undefined);
       await fresh.close();
     }
+
+    group('From the card: "Log an error" in Fill in and file');
+    {
+      store.down = false;
+      store.refuse = null;
+      /*
+       * The fallback window, every time: the action popup `openPopup` opens
+       * is not a page Playwright is shown, and the window is the same page
+       * reading the same notes.
+       */
+      await worker.evaluate(() => {
+        chrome.action.openPopup = async () => {
+          throw new Error('no popup in this test');
+        };
+      });
+      const tabPage = await context.newPage();
+      await tabPage.goto(`${store.base}/apply`);
+      await waitFor(async () => tabPage.frames().length === 2 && tabPage.frames()[1].url().endsWith('/apply-frame'));
+      // And the content script in both, before anything is sent from its world.
+      await sleep(500);
+      /** Send a message from the content script's world in the top frame, or in the frame inside it. */
+      const fromContent = (where, type, payload = {}) =>
+        worker.evaluate(
+          async ([pageUrl, top, t, p]) => {
+            const [tab] = await chrome.tabs.query({ url: pageUrl });
+            const frames = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => window === window.top });
+            const frameId = frames.find((f) => f.result === top)?.frameId;
+            const [{ result }] = await chrome.scripting.executeScript({
+              target: { tabId: tab.id, frameIds: [frameId] },
+              world: 'ISOLATED',
+              args: [t, p],
+              func: (type, payload) => new Promise((done) => chrome.runtime.sendMessage({ type, payload }, done)),
+            });
+            return { frameId, ...result };
+          },
+          [`${store.base}/apply`, where === 'top', type, payload],
+        );
+      const draftNow = () => driver.evaluate(async () => (await chrome.storage.session.get('jh-open-error-log-draft'))['jh-open-error-log-draft']);
+
+      const framed = await fromContent('frame', 'openErrorLogFromCard', { draft: 'From a frame' });
+      check('from a frame of the page, it is refused', framed.frameId !== 0 && framed.ok === false && /from the card on the page/.test(framed.error ?? ''), JSON.stringify(framed));
+      check('and nothing is left for a popup to start from', (await draftNow()) === undefined);
+      const own = await fromContent('top', 'openErrorLog');
+      check('"openErrorLog" stays the extension’s own pages’ alone, card or no card', own.ok === false && /only accepted from JobHelper’s own pages/.test(own.error ?? ''), JSON.stringify(own));
+      const saveFromPage = await fromContent('top', 'saveErrorLog', { description: 'from a page', screenshots: [PNG] });
+      check('and so does saving an entry', saveFromPage.ok === false && /own pages/.test(saveFromPage.error ?? ''), JSON.stringify(saveFromPage));
+
+      const logged = await fromContent('top', 'logEvents', {
+        events: [{ kind: 'card-step', level: 'info', message: 'Filled 9 fields, 1 field still for you to answer.' }],
+      });
+      check('the step’s report lines go into the automatic logs', logged.ok === true && logged.data?.kept === 1, JSON.stringify(logged));
+
+      const before = context.pages().length;
+      const long = `From the card — Fill in and file on 127.0.0.1:\u0000 Filled 9 fields.\n\u001b[31m${'x'.repeat(1000)}`;
+      const opened = await fromContent('top', 'openErrorLogFromCard', { draft: long, screenshots: [PNG], description: 'not this', events: [{ kind: 'x', message: 'not this' }] });
+      check('from the card in the top frame, it opens the form', opened.frameId === 0 && opened.ok === true && opened.data?.opened === 'window', JSON.stringify(opened));
+      const again = await fromContent('top', 'openErrorLogFromCard', { draft: 'again' });
+      check('once in two seconds at most', again.ok === false && /already opening/.test(again.error ?? ''), JSON.stringify(again));
+
+      const form = await waitFor(async () => context.pages().find((p, i) => i >= before && /popup\.html#log-error$/.test(p.url())));
+      check('in the error-log form’s window', Boolean(form));
+      if (form) {
+        await waitFor(() => form.evaluate(() => document.getElementById('errorDescription').value !== ''));
+        const box = await form.evaluate(() => {
+          const el = document.getElementById('errorDescription');
+          return { value: el.value, focused: document.activeElement === el, caret: el.selectionStart, end: el.selectionEnd, shots: document.querySelectorAll('#errorShots img').length };
+        });
+        const [draftLine, ...rest] = box.value.split('\n');
+        check('the description starts with the card’s draft', draftLine.startsWith('From the card — Fill in and file on 127.0.0.1: Filled 9 fields.'), JSON.stringify(box.value.slice(0, 80)));
+        check('cut to 300 characters', draftLine.length === 300 && draftLine.endsWith('…'), String(draftLine.length));
+        check('one line, with no control characters', rest.join('') === '' && !/[\u0000-\u0009\u000b-\u001f]/.test(box.value), JSON.stringify(box.value.slice(0, 120)));
+        check('focused, the caret at its end, ready to say what went wrong', box.focused && box.caret === box.value.length && box.end === box.value.length, JSON.stringify({ ...box, value: undefined }));
+        check('and no screenshot from the page: the card’s message carries none', box.shots === 0);
+        check('the draft is used up', (await draftNow()) === undefined);
+
+        await form.evaluate(() => {
+          const el = document.getElementById('errorDescription');
+          el.value += 'The transcript went into the resume box.';
+        });
+        const count = store.entries.length;
+        await form.click('#saveErrorLog');
+        await waitFor(async () => store.entries.length === count + 1);
+        const entry = store.entries.at(-1);
+        check('the entry has the draft and what was added to it', /^From the card — Fill in and file on 127\.0\.0\.1: Filled 9 fields\.[^\n]*…\nThe transcript went into the resume box\.$/.test(entry?.description ?? ''), JSON.stringify(entry?.description));
+        const said = (entry?.events ?? []).map((e) => `${e.kind}: ${e.message}`);
+        check('and the step’s report in its automatic logs', said.includes('card-step: Filled 9 fields, 1 field still for you to answer.'), said.join(' | '));
+        check('and nothing else the message carried', !JSON.stringify(entry).includes('not this') && (entry?.screenshots ?? []).length === 0);
+        await form.close();
+      }
+
+      // A draft left from an earlier opening is not the next one's.
+      await driver.evaluate(() =>
+        chrome.storage.session.set({ 'jh-open-error-log': Date.now(), 'jh-open-error-log-draft': { text: 'From the card — an old one', at: Date.now() - 5 * 60_000 } }),
+      );
+      const stale = await context.newPage();
+      await stale.goto(popupUrl);
+      await waitFor(() => stale.isVisible('#errorLogForm'));
+      await sleep(300);
+      check('a stale draft is not used', (await stale.inputValue('#errorDescription')) === '');
+      check('and is cleared all the same', (await draftNow()) === undefined);
+      await stale.close();
+      // The shortcut, or the popup's own way to the form, opens it with no draft at all.
+      await driver.evaluate(() => chrome.storage.session.set({ 'jh-open-error-log-draft': { text: 'From the card — left over', at: Date.now() } }));
+      const plain = await ask(driver, 'openErrorLog');
+      check('opened any other way, no draft is left for it', plain?.ok === true && (await draftNow()) === undefined, JSON.stringify(plain));
+      await tabPage.close();
+    }
   } finally {
     await context.close();
     store.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
+    fs.rmSync(extensionRoot, { recursive: true, force: true });
   }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);

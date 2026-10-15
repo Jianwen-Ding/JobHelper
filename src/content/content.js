@@ -1135,6 +1135,23 @@
       },
       true,
     );
+    /*
+     * And again once the page has had its say, because the last word on
+     * `dropEffect` is the one the browser goes by. LinkedIn refuses drops
+     * everywhere but on its upload control — a `dragover` handler of its own
+     * that sets `dropEffect = 'none'`, so that a file let go of by mistake
+     * does not navigate the tab — and that ran after the capture above and
+     * undid it: the browser then refused the drop, no `drop` event came, and
+     * a chip let go of over the list of resumes did nothing at all, with
+     * nothing on the card to say so. Measured with a real pointer: of four
+     * drops on the Easy Apply step only the one on the Upload button arrived.
+     * The window is the last place a `dragover` goes.
+     */
+    window.addEventListener('dragover', (event) => {
+      if (!inTheAir || carriesFiles(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    });
     document.addEventListener(
       'drop',
       (event) => {
@@ -1652,6 +1669,22 @@
        */
       case 'openPanel':
         return send('openPanel', {});
+
+      /*
+       * "Log an error" in the card's "Fill in and file" step: the lines that
+       * step was showing, into the worker's automatic logs, and the popup's
+       * error-log form opened with a short draft. Only these — the card's own
+       * sentences and the page's host — never anything from the form. Sent
+       * straight away, like `openPanel`: the popup opens in answer to a press.
+       */
+      case 'logError': {
+        const lines = (Array.isArray(payload.lines) ? payload.lines : [])
+          .filter((line) => typeof line === 'string' && line.trim())
+          .slice(0, 5)
+          .map((message) => ({ kind: 'card-step', level: 'info', message: message.slice(0, 1000) }));
+        if (lines.length) send('logEvents', { events: lines }).catch(() => undefined);
+        return send('openErrorLogFromCard', { draft: typeof payload.draft === 'string' ? payload.draft.slice(0, 300) : '' });
+      }
 
       /** Which resume the card is working with, for the side panel to show. */
       case 'panelTarget':

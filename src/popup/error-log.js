@@ -11,10 +11,12 @@
  * Opened by its button, or by the keyboard command (Alt+Shift+E), which the
  * worker answers by opening this popup with a note in session storage — or,
  * where the popup cannot be opened for it, this page in a window of its own
- * at `#log-error`.
+ * at `#log-error`. The card's "Log an error" (in its "Fill in and file"
+ * step) opens it the same way, with a short draft of where it came from to
+ * start the description (see `startWith`).
  */
 
-import { MAX_SCREENSHOTS, MAX_SCREENSHOT_BYTES, OPEN_FORM_KEY, SCRUB_HINT, bytesIn, refusedText } from '../shared/error-log.js';
+import { MAX_SCREENSHOTS, MAX_SCREENSHOT_BYTES, OPEN_FORM_DRAFT_KEY, OPEN_FORM_KEY, SCRUB_HINT, bytesIn, cardDraft, refusedText } from '../shared/error-log.js';
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 
@@ -310,17 +312,40 @@ export function setupErrorLogForm({ send, activeTab, onUnreachable = () => {} })
     }
   };
 
-  // Opened for the keyboard command: by its note in session storage, or by the address.
+  /*
+   * The card's draft: where the press came from, and what its step was
+   * saying. Put in the box only while the box is empty — never over what
+   * somebody has started typing — with the caret after it, on a line of its
+   * own, so what went wrong is typed straight on. Read through `cardDraft`
+   * again: session storage is the worker's, but the words began in a page.
+   */
+  function startWith(draft) {
+    const box = $('errorDescription');
+    const text = cardDraft(draft);
+    if (!text || box.value.trim() !== '') return;
+    box.value = `${text}\n`;
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  // Opened for the keyboard command or the card: by its note in session storage, or by the address.
   (async () => {
     let asked = location.hash === '#log-error';
+    let draft = null;
     try {
-      const { [OPEN_FORM_KEY]: at } = await chrome.storage.session.get(OPEN_FORM_KEY);
+      const { [OPEN_FORM_KEY]: at, [OPEN_FORM_DRAFT_KEY]: drafted } = await chrome.storage.session.get([OPEN_FORM_KEY, OPEN_FORM_DRAFT_KEY]);
       if (typeof at === 'number' && Date.now() - at < 60_000) asked = true;
+      // The draft of this opening only: as fresh as the note, and used up with it.
+      if (asked && drafted && typeof drafted.at === 'number' && Date.now() - drafted.at < 60_000) draft = drafted.text;
       if (at !== undefined) await chrome.storage.session.remove(OPEN_FORM_KEY);
+      if (drafted !== undefined) await chrome.storage.session.remove(OPEN_FORM_DRAFT_KEY);
     } catch {
       // No session storage to read: the address still says.
     }
     if (asked) open();
+    if (draft) startWith(draft);
   })();
   showQueued();
 

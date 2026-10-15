@@ -8,7 +8,9 @@
 import { getSettings, NOT_PAIRED_MESSAGE, pairingHeaders, rememberPairing } from '../shared/config.js';
 import { saveBugReport, listBugReports, syncBugReport, clearBugReport, extensionBuild } from '../shared/bug-reports.js';
 import {
+  OPEN_FORM_DRAFT_KEY,
   OPEN_FORM_KEY,
+  cardDraft,
   createLogBuffer,
   dismissRefusedErrorLogs,
   queuedErrorLogs,
@@ -2329,7 +2331,7 @@ const handlers = {
     let kept = 0;
     for (const e of (Array.isArray(events) ? events : []).slice(0, 20)) {
       if (!e || typeof e.message !== 'string' || !e.message.trim()) continue;
-      const kind = ['content-error', 'card-error', 'card-status'].includes(e.kind) ? e.kind : 'content';
+      const kind = ['content-error', 'card-error', 'card-status', 'card-step'].includes(e.kind) ? e.kind : 'content';
       noteEvent(kind, ['error', 'warn', 'info'].includes(e.level) ? e.level : 'error', e.message.slice(0, 1000), {
         host: (() => {
           try {
@@ -2367,6 +2369,26 @@ const handlers = {
   },
   async openErrorLog() {
     return openErrorLogForm();
+  },
+  /*
+   * The same form, from the card's "Log an error" (step 4, "Fill in and
+   * file"), started with a few words saying where it came from.
+   *
+   * The card runs in pages that are not ours, so this is held to less than
+   * `openErrorLog`, which stays the extension's own pages' alone: the card in
+   * the top frame only (where it is drawn; a frame of the page has no card),
+   * once in two seconds at most, and nothing taken but a short draft —
+   * `cardDraft` makes it one line of at most 300 characters, and any other
+   * field in the message (a screenshot, an entry) is never read. The card
+   * sends it only from a press a person made: it refuses untrusted events at
+   * its root (see `refuseUntrusted` in card.js).
+   */
+  async openErrorLogFromCard(payload, tab, sender) {
+    if (!tab || sender?.frameId !== 0) throw new Error('The error log opens from the card on the page, or from the popup.');
+    const now = Date.now();
+    if (now - cardLogOpenedAt < CARD_LOG_EVERY_MS) throw new Error('The error-log form is already opening.');
+    cardLogOpenedAt = now;
+    return openErrorLogForm({ draft: cardDraft(payload?.draft) });
   },
   async listBugReports() { return listBugReports(); },
   async syncBugReport({ id }) { return syncBugReport(id, serverFetch); },
@@ -4467,6 +4489,7 @@ const OWN_PAGES_ONLY = new Set([
   'saveErrorLog',
   'errorLogQueue',
   'dismissRefusedErrorLogs',
+  // The card has its own way to the form, held to less: `openErrorLogFromCard`.
   'openErrorLog',
   'syncBugReport',
   'listBugReports',
@@ -4868,8 +4891,14 @@ const NEVER_CHOSEN = ['minScore'];
  * window and a recent Chrome; where it cannot, the same page opens in a small
  * window of its own, already on the form.
  */
-async function openErrorLogForm() {
-  await chrome.storage.session.set({ [OPEN_FORM_KEY]: Date.now() }).catch(() => undefined);
+async function openErrorLogForm({ draft = '' } = {}) {
+  const at = Date.now();
+  // A draft only for this opening: one left from an earlier press is not this one's.
+  await chrome.storage.session.set({ [OPEN_FORM_KEY]: at }).catch(() => undefined);
+  await (draft
+    ? chrome.storage.session.set({ [OPEN_FORM_DRAFT_KEY]: { text: draft, at } })
+    : chrome.storage.session.remove(OPEN_FORM_DRAFT_KEY)
+  ).catch(() => undefined);
   try {
     await chrome.action.openPopup();
     return { opened: 'popup' };
@@ -4878,6 +4907,9 @@ async function openErrorLogForm() {
     return { opened: 'window' };
   }
 }
+/** The card's "Log an error": when it last opened the form, and how often it may. See `openErrorLogFromCard`. */
+let cardLogOpenedAt = 0;
+const CARD_LOG_EVERY_MS = 2000;
 chrome.commands?.onCommand.addListener((command) => {
   if (command === 'log-error') openErrorLogForm().catch((err) => noteEvent('worker-error', 'error', `The error-log form would not open: ${err?.message ?? err}`));
 });
