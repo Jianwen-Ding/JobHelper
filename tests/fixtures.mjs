@@ -2115,6 +2115,94 @@ export const EA_FORM = {
   ),
 };
 
+/**
+ * A posting whose form is in a frame, beside four more frames holding the
+ * same application form that nobody can see: one pixel square, fully
+ * transparent, off the page, and `visibility: hidden`. Every one is on
+ * another origin, as an advert network's frames are.
+ *
+ * Autofill used to give the person's name, email and phone to all five —
+ * the hidden ones are exactly how a page would collect them unseen. Only the
+ * visible one may be filled. `{{OTHER}}` is the second fixture server.
+ */
+const HIDDEN_FRAME_STYLE = {
+  seen: 'width:600px;height:400px;border:1px solid #ccc',
+  tiny: 'width:1px;height:1px;border:0',
+  clear: 'width:600px;height:400px;border:0;opacity:0',
+  away: 'position:absolute;left:-5000px;top:0;width:600px;height:400px;border:0',
+  unseen: 'width:600px;height:400px;border:0;visibility:hidden',
+};
+export const HIDDEN_FRAMES = {
+  name: 'hidden-frames',
+  path: '/tarazed/jobs/77/platform-engineer',
+  company: 'Tarazed',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Tarazed</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Tarazed</h1><div>Platform Engineer</div></div>
+  <div class="wrap">
+    ${ROLE_BODY}
+    <h2>Apply now</h2>
+    ${Object.entries(HIDDEN_FRAME_STYLE)
+      .map(([id, style]) => `<iframe id="${id}" title="Application form" src="{{OTHER}}/hidden-frames/form/${id}" style="${style}"></iframe>`)
+      .join('\n    ')}
+  </div>
+</body></html>`,
+};
+
+const PLAIN_APPLICATION = `<form>
+  <label for="fn">First Name</label><input id="fn" name="first_name" type="text">
+  <label for="ln">Last Name</label><input id="ln" name="last_name" type="text">
+  <label for="em">Email Address</label><input id="em" name="email" type="email">
+  <label for="ph">Phone Number</label><input id="ph" name="phone" type="tel">
+  <label for="li">LinkedIn Profile</label><input id="li" name="linkedin" type="url">
+  <label for="q1">Why do you want to work here?</label><textarea id="q1" name="why_here"></textarea>
+  <button type="button">Submit Application</button>
+</form>`;
+
+export const HIDDEN_FRAMES_FORM = {
+  name: 'hidden-frames-form',
+  path: '/hidden-frames/form',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Application</title></head>
+<body>${PLAIN_APPLICATION}</body></html>`,
+};
+
+/**
+ * The form in frames with no address of their own: one `srcdoc`, and one an
+ * empty frame the page writes into with `document.write` a moment after it
+ * loads — which is how a good many embeds are drawn. Neither matched a
+ * content script's `matches`, so neither was ever filled; and `document.open`
+ * takes every listener off the frame's window.
+ */
+export const WRITTEN_FRAMES = {
+  name: 'written-frames',
+  path: '/sadr/jobs/12/platform-engineer',
+  company: 'Sadr',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Sadr</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Sadr</h1><div>Platform Engineer</div></div>
+  <div class="wrap">
+    ${ROLE_BODY}
+    <h2>Apply now</h2>
+    <iframe id="sourced" title="Application form" style="width:600px;height:400px"
+            srcdoc="${`<!doctype html><title>Apply</title>${PLAIN_APPLICATION}`.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"></iframe>
+    <iframe id="written" title="Application form" style="width:600px;height:400px"></iframe>
+    <script>
+      setTimeout(() => {
+        const d = document.getElementById('written').contentDocument;
+        d.open();
+        d.write(${JSON.stringify(`<!doctype html><title>Apply</title>${PLAIN_APPLICATION}`).replace(/</g, '\\u003c')});
+        d.close();
+      }, 1500);
+    </script>
+  </div>
+</body></html>`,
+};
+
 export const NAVIGATION = [
   EA_ROLE, EA_METHODS, EA_FORM,
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
@@ -2125,6 +2213,7 @@ export const NAVIGATION = [
   ONE_ADDRESS_BOARD, SOLO_ROLE, SOLO_OTHER, SOLO_OTHER_FORM, NIMBUS_ROLE, NIMBUS_QUIET_FORM,
   LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN, META_ROLE, META_FORM, META_OTHER_ROLE,
   DIV_BUTTON_ROLE, DIV_BUTTON_FORM,
+  HIDDEN_FRAMES, HIDDEN_FRAMES_FORM, WRITTEN_FRAMES,
 ];
 
 export const ALL = [

@@ -1423,9 +1423,29 @@ function scrubCopy(root) {
   return root;
 }
 
-export function pageHtml(doc = document) {
+/*
+ * `dropJsonLd(text)`, when given, is asked about each JSON-LD block of the
+ * document: true leaves it out of the copy. A single-page board that routed
+ * to another posting leaves the last one's JobPosting in its head, and that
+ * block is what the reader takes the job from. See `staleLd` in content.js.
+ */
+export function pageHtml(doc = document, { dropJsonLd = null } = {}) {
   const inert = doc.implementation.createHTMLDocument('');
-  const copyOf = (node) => scrubCopy(inert.importNode(node, true));
+  const copyOf = (node) => {
+    const copy = inert.importNode(node, true);
+    if (typeof dropJsonLd === 'function') {
+      for (const tag of copy.querySelectorAll('script[type="application/ld+json"]')) {
+        let drop = false;
+        try {
+          drop = Boolean(dropJsonLd(tag.textContent ?? ''));
+        } catch {
+          drop = false;
+        }
+        if (drop) tag.remove();
+      }
+    }
+    return scrubCopy(copy);
+  };
   const extra = [];
   const seen = new Set();
   const rootOf = (el) => {

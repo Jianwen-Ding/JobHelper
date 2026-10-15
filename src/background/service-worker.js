@@ -5,7 +5,7 @@
  * is not running.
  */
 
-import { getSettings, NOT_PAIRED_MESSAGE, pairingHeaders, rememberPairing } from '../shared/config.js';
+import { DEFAULTS, getSettings, NOT_PAIRED_MESSAGE, pairingHeaders, rememberPairing } from '../shared/config.js';
 import { saveBugReport, listBugReports, syncBugReport, clearBugReport, extensionBuild } from '../shared/bug-reports.js';
 import {
   OPEN_FORM_DRAFT_KEY,
@@ -187,7 +187,22 @@ async function saveFor(tabId) {
     saveOf.set(tabId, trail.save);
     return trail.save;
   }
+  /*
+   * Built against a ResumeM-M at another address. Its save's name means
+   * nothing to the one this extension is pointed at now — a "work" there is
+   * not this "work" — so nothing is written for it until the page is read
+   * again from the new one. See `serverChanged`.
+   */
+  if (trail.serverMoved) throw serverMovedError();
   return saveOf.get(tabId);
+}
+
+function serverMovedError() {
+  const err = new Error(
+    'JobHelper was pointed at a different ResumeM-M since this page was read, so it will not write this into whichever save is open there. Reload this page to start it again from the new one.',
+  );
+  err.jobhelper = { serverMoved: true };
+  return err;
 }
 
 /**
@@ -1608,8 +1623,37 @@ function changeTrail(tabId, change) {
     const before = await readTrail(tabId);
     const next = await change(before);
     if (!next) return { before, written: null };
+    /*
+     * Nothing new, and written a moment ago: not written again. The card's
+     * keeper sends its work every two seconds whether or not a word changed,
+     * and each one rewrote the whole trail — page markup and all — and the
+     * copy kept for an extension reload (`mirrorChanges`). Thirty seconds, so
+     * the trail's clock (`TRAIL_STALE_MS`) still moves while a page is open.
+     */
+    if (before.at && Date.now() - before.at < UNCHANGED_REWRITE_MS && sameValue(withoutAt(before), withoutAt(next))) {
+      return { before, written: before, unchanged: true };
+    }
     return { before, written: await writeTrail(tabId, next) };
   });
+}
+
+const UNCHANGED_REWRITE_MS = 30_000;
+const withoutAt = ({ at: _at, ...rest }) => rest;
+
+/** The same JSON, whatever order its keys were written in. */
+function sameValue(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') {
+    // `undefined` and a missing key are the same thing once stored.
+    return (a ?? undefined) === (b ?? undefined);
+  }
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) return a.length === b.length && a.every((v, i) => sameValue(v, b[i]));
+  const keys = (o) => Object.keys(o).filter((k) => o[k] !== undefined && typeof o[k] !== 'function');
+  const ka = keys(a);
+  const kb = keys(b);
+  if (ka.length !== kb.length) return false;
+  return ka.every((k) => Object.hasOwn(b, k) && sameValue(a[k], b[k]));
 }
 
 /*
@@ -1681,11 +1725,11 @@ async function askThePage(tabId) {
  * back. A frame that has navigated away, or is cross-origin and gone, simply
  * does not answer — which is ordinary rather than an error.
  */
-async function askFrames(tabId, message) {
+async function askFrames(tabId, message, only = null) {
   const key = framesKey(tabId);
   const ids = (await session().get(key))[key] ?? [];
   const replies = await Promise.all(
-    ids.map(async (frameId) => {
+    ids.filter((frameId) => !only || only.has(frameId)).map(async (frameId) => {
       try {
         const reply = await chrome.tabs.sendMessage(tabId, message, { frameId });
         return reply?.ok ? { frameId, data: reply.data } : null;
@@ -1697,6 +1741,53 @@ async function askFrames(tabId, message) {
     }),
   );
   return replies.filter(Boolean);
+}
+
+/**
+ * The sub-frames of a tab a person can actually see, reached from the top.
+ *
+ * Autofill handed the person's name, email, phone and LinkedIn to every
+ * registered frame that thought it held an application — a cross-origin 1×1
+ * frame at opacity 0, off the page, was filled like the real form. A frame
+ * cannot see how it is shown; the document around it can. So each document
+ * hands its child frames random tokens and says, when asked here, which of
+ * them went to frames it can see (`jh-frame-tokens` in content.js), and a
+ * frame says which token its own parent gave it. A frame is filled only when
+ * every frame between it and the top is visible in the one above it.
+ *
+ * Asked twice: the first time arms every document (hands tokens out again,
+ * asks for a missing one, puts back a listener `document.open()` took away),
+ * the second reads what they say once the tokens have landed.
+ */
+async function visibleFrames(tabId) {
+  const key = framesKey(tabId);
+  const ids = (await session().get(key))[key] ?? [];
+  const ask = (arm) =>
+    Promise.all(
+      [0, ...ids].map((frameId) =>
+        chrome.tabs
+          .sendMessage(tabId, { type: 'jh-frame-tokens', payload: { arm } }, { frameId })
+          .then((reply) => (reply?.ok ? { frameId, ...reply.data } : null))
+          .catch(() => null),
+      ),
+    );
+  await ask(true);
+  await new Promise((r) => setTimeout(r, 150));
+  const said = (await ask(false)).filter(Boolean);
+  const top = said.find((s) => s.frameId === 0);
+  const shown = new Set(top?.visible ?? []);
+  const reachable = new Set();
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const frame of said) {
+      if (frame.frameId === 0 || reachable.has(frame.frameId)) continue;
+      if (typeof frame.mine !== 'string' || !shown.has(frame.mine)) continue;
+      reachable.add(frame.frameId);
+      for (const token of frame.visible ?? []) shown.add(token);
+      grew = true;
+    }
+  }
+  return { reachable, refused: ids.filter((id) => !reachable.has(id)) };
 }
 
 /**
@@ -1798,7 +1889,7 @@ async function holdASpace(trail, tabId) {
    * one is retried as the application grows; a row in a stranger's tracker is
    * not undone by the next attempt.
    */
-  const save = await saveFor(tabId);
+  const save = await saveFor(tabId).catch(() => undefined);
   if (!save) return;
   /*
    * Named by the spec, which is the only thing here that knows. A trail page
@@ -2214,6 +2305,8 @@ async function remember(tab, page) {
        * inherits nothing and this is the page that decides which save it is.
        */
       save: joins ? (trail.save ?? page.save) : page.save,
+      // Read from the server this extension is pointed at now. See `serverChanged`.
+      serverMoved: undefined,
       pages: keepPages(pages, TRAIL_MAX),
       /*
        * And, when this was a guess, what the guess was — so the card can say
@@ -2315,10 +2408,12 @@ async function keepWork({ work, page }, tab) {
    * to go on — and the note on `markTab` says the purpose of this line is
    * to be believed when it says nothing was lost.
    */
-  await markTab(tab?.id, written === null ? trail : next);
+  // What is stored, which is the trail as it was when nothing had changed.
+  const stored = written === null ? trail : written;
+  await markTab(tab?.id, stored);
   // Handed back rather than awaited here: the keeper does not wait on it,
   // and a send does, through `savesInFlight`.
-  return { reply: { ok: written !== null }, holding: holdASpace(next, tab?.id) };
+  return { reply: { ok: written !== null }, holding: holdASpace(written ?? next, tab?.id) };
 }
 
 const handlers = {
@@ -2436,9 +2531,14 @@ const handlers = {
 
   /** Put the files into whatever upload boxes the sub-frames hold. */
   async attachInFrames({ files }, tab) {
-    if (tab?.id === undefined) return { frames: [] };
-    const replies = await askFrames(tab.id, { type: 'jh-frame-attach', payload: { files } });
-    return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
+    if (tab?.id === undefined) return { frames: [], refused: [] };
+    // Only the frames somebody can see. See `visibleFrames`.
+    const { reachable, refused } = await visibleFrames(tab.id);
+    const replies = await askFrames(tab.id, { type: 'jh-frame-attach', payload: { files } }, reachable);
+    return {
+      frames: replies.filter(({ data }) => !data?.refused).map(({ frameId, data }) => ({ frameId, ...data })),
+      refused: [...refused, ...replies.filter(({ data }) => data?.refused).map(({ frameId }) => frameId)],
+    };
   },
 
   /**
@@ -2493,9 +2593,18 @@ const handlers = {
 
   /** Fill the form in every sub-frame from the same profile. */
   async fillFrames({ fields, history = [], education = [] }, tab) {
-    if (tab?.id === undefined) return { frames: [] };
-    const replies = await askFrames(tab.id, { type: 'jh-frame-fill', payload: { fields, history, education } });
-    return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
+    if (tab?.id === undefined) return { frames: [], refused: [] };
+    /*
+     * Only the frames somebody can see, reached from the top through frames
+     * somebody can see. Every other frame gets nothing about the person. See
+     * `visibleFrames`.
+     */
+    const { reachable, refused } = await visibleFrames(tab.id);
+    const replies = await askFrames(tab.id, { type: 'jh-frame-fill', payload: { fields, history, education } }, reachable);
+    return {
+      frames: replies.filter(({ data }) => !data?.refused).map(({ frameId, data }) => ({ frameId, ...data })),
+      refused: [...refused, ...replies.filter(({ data }) => data?.refused).map(({ frameId }) => frameId)],
+    };
   },
 
   /** Put an answer into a field that lives in one particular frame. */
@@ -3303,7 +3412,10 @@ const handlers = {
   },
 
   async setSettings({ patch }) {
+    const { serverUrl: before } = await getSettings();
     await chrome.storage.sync.set(patch);
+    // Taken in before answering, so the popup's next message finds it done.
+    if (patch && typeof patch.serverUrl === 'string') await serverChanged(before, patch.serverUrl);
     return getSettings();
   },
 
@@ -3454,7 +3566,7 @@ const handlers = {
      * A genuinely new application in this tab does rebind — see `remember`,
      * which keeps the save only while the application continues.
      */
-    if (result?.save && tab?.id !== undefined && !(await saveFor(tab.id))) {
+    if (result?.save && tab?.id !== undefined && !(await saveFor(tab.id).catch(() => null))) {
       saveOf.set(tab.id, result.save);
     }
     if (result?.isJobPosting) {
@@ -4516,6 +4628,9 @@ const fromOwnPage = (sender) => Boolean(sender?.url?.startsWith(chrome.runtime.g
  */
 const PRERENDER_ALLOWED = new Set(['frameReady']);
 
+/** Handlers that must run in the turn of the click that asked. See the router. */
+const OPENS_A_WINDOW = new Set(['openPanel', 'openErrorLog', 'openErrorLogFromCard']);
+
 /**
  * The actions worth a line in the error log when they run, under the names a
  * person would give them. Every other message is noted only when it fails.
@@ -4573,7 +4688,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // knows which one — it used to be thrown away. The frame matters too, now
   // that the form is often not in the page the card is sitting on.
   const started = Date.now();
-  handler(message.payload ?? {}, sender?.tab, sender)
+  /*
+   * After the work this worker may have to put back first (`restoreMirror`)
+   * and a change of server being taken in (`serverChanged`) — except where
+   * the handler opens a window: `sidePanel.open` and `action.openPopup` are
+   * allowed only in the turn of the click that asked, and waiting even for a
+   * storage read spends it.
+   */
+  const run = () => handler(message.payload ?? {}, sender?.tab, sender);
+  (OPENS_A_WINDOW.has(type) ? run() : workerReady().then(run))
     .then((data) => {
       // Which action ran, and that it worked — its name only. See `noteAction`.
       noteAction(type, true, Date.now() - started);
@@ -4714,8 +4837,17 @@ const tabKeys = (tabId) => [
   branchKey(tabId),
   awayKey(tabId),
   panelKey(tabId),
+  `${PAIR_LATER_PREFIX}${tabId}`,
 ];
-const TAB_KEYED = /^(?:trail|frames|filedCopies|jh-branched|jh-away|jh-panel):(\d+)$/;
+const TAB_KEYED = /^(?:trail|frames|filedCopies|jh-branched|jh-away|jh-panel|jh-pair-later):(\d+)$/;
+
+/*
+ * How long a held-space mark and a tab's "Not now" on pairing are kept. A
+ * mark is what stops a second row being opened for one application, so it
+ * outlives the trail; but nothing ever let either go, and session storage is
+ * the 10MB every trail shares.
+ */
+const HELD_STALE_MS = 12 * 60 * 60 * 1000;
 
 async function sweepOrphans() {
   const all = await session().get(null).catch(() => ({}));
@@ -4747,7 +4879,9 @@ async function sweepOrphans() {
       ([key, value]) =>
         // And the claim marks, by the same clock: past it the entry a mark
         // names is too old to be handed over by `takeWork` anyway.
-        (key.startsWith('jh-closed:') || key.startsWith('jh-claimed:')) && Date.now() - (value?.at ?? 0) > TRAIL_STALE_MS,
+        ((key.startsWith('jh-closed:') || key.startsWith('jh-claimed:')) && Date.now() - (value?.at ?? 0) > TRAIL_STALE_MS) ||
+        (key.startsWith('jh-held:') && Date.now() - (value?.at ?? 0) > HELD_STALE_MS) ||
+        (key.startsWith(PAIR_LATER_PREFIX) && Date.now() - (typeof value === 'number' ? value : (value?.at ?? 0)) > HELD_STALE_MS),
     )
     .map(([key]) => key);
   /*
@@ -4800,6 +4934,215 @@ async function sweepOrphans() {
   const doomed = [...expired, ...surplus, ...deadTabs, ...oldMarks];
   if (doomed.length > 0) await session().remove(doomed).catch(() => undefined);
 }
+
+/* ------------------------------------------------------------------ *
+ * Outliving a reload of the extension                                 *
+ * ------------------------------------------------------------------ */
+
+/*
+ * Everything this worker holds of somebody's application lived only in
+ * `chrome.storage.session`, which Chrome empties when the extension is
+ * reloaded or updated — so an update in the middle of a letter took the
+ * letter, the parked work of every closed tab and the marks that stop a
+ * second tracker row being opened.
+ *
+ * So each is copied, as it changes, into `chrome.storage.local` under
+ * `jh-mirror:`: trails without their page markup (the bulk, and readable
+ * again by visiting the page), parked work, and held-space marks. The first
+ * worker to start on an empty session puts them back (`restoreMirror`).
+ */
+const MIRROR_PREFIX = 'jh-mirror:';
+const MIRRORED = /^(?:trail:\d+$|jh-orphan:|jh-held:)/;
+const BOOTED_KEY = 'jh-booted';
+
+const mirrorOf = (key, value) =>
+  key.startsWith('trail:') && value && typeof value === 'object'
+    ? { ...value, pages: (value.pages ?? []).map((page) => {
+        if (!page || typeof page !== 'object') return page;
+        const { html: _html, ...rest } = page;
+        return rest;
+      }) }
+    : value;
+
+let mirrorWrites = Promise.resolve();
+function mirrorChanges(changes) {
+  const put = {};
+  const gone = [];
+  for (const [key, change] of Object.entries(changes ?? {})) {
+    if (!MIRRORED.test(key)) continue;
+    if (change?.newValue === undefined) gone.push(`${MIRROR_PREFIX}${key}`);
+    else put[`${MIRROR_PREFIX}${key}`] = mirrorOf(key, change.newValue);
+  }
+  if (gone.length === 0 && Object.keys(put).length === 0) return;
+  // In order, so a removal is never overtaken by the write before it.
+  mirrorWrites = mirrorWrites
+    .then(async () => {
+      if (gone.length) await chrome.storage.local.remove(gone);
+      if (Object.keys(put).length) await chrome.storage.local.set(put);
+    })
+    .catch(() => undefined);
+}
+
+/** An address as a page of a trail is matched: without its fragment. */
+const pageAddress = (url) => String(url ?? '').split('#')[0];
+
+let restoring = null;
+/**
+ * Put the mirrored work back, once, into a session that has just been emptied.
+ *
+ * A trail goes back to its tab only if that tab is still on one of its pages;
+ * a tab that has gone, or gone elsewhere, has its work parked by the page
+ * addresses instead, where coming back to the posting finds it — as a closed
+ * tab's is (see `onRemoved`). Two hours old and it is another sitting; a
+ * held-space mark is kept for twelve.
+ */
+function restoreMirror() {
+  restoring ??= (async () => {
+    const booted = (await session().get(BOOTED_KEY).catch(() => ({})))[BOOTED_KEY];
+    if (booted) return;
+    await session().set({ [BOOTED_KEY]: Date.now() }).catch(() => undefined);
+    const all = await chrome.storage.local.get(null).catch(() => ({}));
+    const mirrored = Object.entries(all ?? {}).filter(([key]) => key.startsWith(MIRROR_PREFIX));
+    if (mirrored.length === 0) return;
+    const tabs = await chrome.tabs.query({}).catch(() => []);
+    const open = new Map(tabs.map((t) => [t.id, t]));
+    const now = Date.now();
+    const put = {};
+    const doomed = [];
+    const parks = [];
+    for (const [mirrorKey, value] of mirrored) {
+      const key = mirrorKey.slice(MIRROR_PREFIX.length);
+      if (key.startsWith('jh-held:')) {
+        if (now - (value?.at ?? 0) > HELD_STALE_MS) doomed.push(mirrorKey);
+        // Settled: a pending mark's worker is gone, and a later one tries again.
+        else put[key] = { at: value.at };
+        continue;
+      }
+      if (key.startsWith('jh-orphan:')) {
+        if (now - (value?.at ?? 0) > TRAIL_STALE_MS) doomed.push(mirrorKey);
+        else put[key] = value;
+        continue;
+      }
+      if (!key.startsWith('trail:')) continue;
+      if (!value || now - (value.at ?? 0) > TRAIL_STALE_MS) {
+        doomed.push(mirrorKey);
+        continue;
+      }
+      const tab = open.get(Number(key.slice('trail:'.length)));
+      const where = [...new Set((value.pages ?? []).map((p) => pageAddress(p?.url)).filter(Boolean))];
+      if (tab && where.includes(pageAddress(tab.url))) {
+        put[key] = value;
+        continue;
+      }
+      doomed.push(mirrorKey);
+      if (value.work && where.length > 0) {
+        const entry = { work: value.work, save: value.save, job: nameOfTrail(value), tab: Number(key.slice('trail:'.length)), at: value.at ?? now };
+        for (const url of where) parks.push([url, entry]);
+      }
+    }
+    if (doomed.length) await chrome.storage.local.remove(doomed).catch(() => undefined);
+    if (Object.keys(put).length) await session().set(put).catch(() => undefined);
+    for (const [url, entry] of parks) await parkWork(url, entry).catch(() => undefined);
+    for (const key of Object.keys(put)) {
+      if (key.startsWith('trail:')) markTab(Number(key.slice('trail:'.length))).catch(() => undefined);
+    }
+  })().catch(() => undefined);
+  return restoring;
+}
+
+/* ------------------------------------------------------------------ *
+ * A different ResumeM-M                                               *
+ * ------------------------------------------------------------------ */
+
+/*
+ * The save each application was built in is a name — "work", "personal" —
+ * and it is only a name on the server that gave it. Pointed at another
+ * ResumeM-M, every trail, branch and parked letter still said "work", the
+ * new server's "work" agreed, and the writes went into a save on a machine
+ * the application was never built against.
+ *
+ * So a change of origin forgets every save this worker knows. A page read
+ * before it refuses to write until it is reloaded (`serverMovedError`), and
+ * the reload reads it from the new server and binds to that one's save.
+ */
+let movingServer = Promise.resolve();
+let lastMove = null;
+const originOf = (url) => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return String(url ?? '');
+  }
+};
+function serverChanged(before, after) {
+  if (before === undefined || after === undefined) return movingServer;
+  if (originOf(before) === originOf(after)) return movingServer;
+  const move = `${originOf(before)} ${originOf(after)}`;
+  if (lastMove?.move === move && Date.now() - lastMove.at < 5000) return movingServer;
+  lastMove = { move, at: Date.now() };
+  saveOf.clear();
+  movingServer = movingServer
+    .then(async () => {
+      saveOf.clear();
+      const all = await session().get(null).catch(() => ({}));
+      const keys = Object.keys(all ?? {});
+      await Promise.all(
+        keys.map((key) => {
+          if (/^trail:\d+$/.test(key) || key === TRAIL_KEY) {
+            return changeStored(key, (stored) => {
+              if (!stored || typeof stored !== 'object') return null;
+              const { save: _save, ...rest } = stored;
+              return { ...rest, serverMoved: true };
+            });
+          }
+          if (key.startsWith('jh-branched:')) {
+            return changeStored(key, (stored) => {
+              if (!stored || typeof stored !== 'object') return null;
+              const { save: _save, ...rest } = stored;
+              if (rest.trail && typeof rest.trail === 'object') {
+                const { save: _inner, ...trail } = rest.trail;
+                rest.trail = { ...trail, serverMoved: true };
+              }
+              return rest;
+            });
+          }
+          if (key.startsWith('jh-orphan:')) {
+            return changeStored(key, (stored) => {
+              if (!stored || typeof stored !== 'object') return null;
+              const strip = (entry) => {
+                if (!entry || typeof entry !== 'object') return entry;
+                const { save: _save, ...rest } = entry;
+                return rest;
+              };
+              const out = strip(stored);
+              if (Array.isArray(out.parked)) out.parked = out.parked.map(strip);
+              return out;
+            });
+          }
+          return null;
+        }),
+      );
+      saveOf.clear();
+    })
+    .catch(() => undefined);
+  return movingServer;
+}
+
+/** What every message but the window-openers waits for. */
+const workerReady = () => Promise.all([restoreMirror(), movingServer]);
+
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area === 'session') mirrorChanges(changes);
+  if (area === 'sync' && changes.serverUrl) {
+    const { oldValue, newValue } = changes.serverUrl;
+    // A setting never set, or removed, is the default — a change like any other.
+    serverChanged(oldValue ?? DEFAULTS.serverUrl, newValue ?? DEFAULTS.serverUrl);
+  }
+});
+
+// Started at once, not at the first message: a tab's badge and alarms are
+// redrawn from the trails it puts back.
+restoreMirror();
 
 chrome.tabs?.onRemoved?.addListener(async (tabId) => {
   // Marked before anything else, so a write still in flight for this tab

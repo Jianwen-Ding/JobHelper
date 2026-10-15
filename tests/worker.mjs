@@ -290,7 +290,12 @@ async function main() {
     executablePath: findChromium(),
     headless: true,
     viewport: { width: 1200, height: 800 },
-    args: ['--no-sandbox', `--disable-extensions-except=${extensionRoot}`, `--load-extension=${extensionRoot}`],
+    /*
+     * `--enable-unsafe-extension-debugging` so `chrome.runtime.reload()` brings
+     * the extension back: without it a command-line extension reloaded in this
+     * browser stays unloaded. See "Work outlives a reload of the extension".
+     */
+    args: ['--no-sandbox', '--enable-unsafe-extension-debugging', `--disable-extensions-except=${extensionRoot}`, `--load-extension=${extensionRoot}`],
     /*
      * West of Greenwich, whatever the machine running this is set to, so an
      * evening is a day behind UTC — which is where a letter id built from the
@@ -3289,6 +3294,218 @@ async function main() {
     }
 
     /*
+     * A single-page board's JSON-LD after it routes to the next posting.
+     *
+     * The board pushes the next posting's address and redraws the heading,
+     * and leaves the first posting's JobPosting block in the head — so the
+     * page sent to be read named the job before, and the card did too. After
+     * a route change a block unchanged since load that does not name the
+     * role on screen is left out of what is sent. And a fragment that is not
+     * a route (`#details`) is not a new page at all.
+     */
+    group('A route change does not read the last posting’s JSON-LD');
+    {
+      const ld = (title) =>
+        `<script type="application/ld+json">${JSON.stringify({ '@context': 'https://schema.org', '@graph': [{ '@type': ['JobPosting'], title, hiringOrganization: { '@type': 'Organization', name: 'Helios' } }] })}</script>`;
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><html><head><title>Platform Engineer at Helios</title>${ld('Platform Engineer')}</head>
+          <body><h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>
+          <script>
+            window.goNext = () => {
+              history.pushState({}, '', '/jobs/data-scientist');
+              document.title = 'Data Scientist at Helios';
+              document.querySelector('h1').textContent = 'Data Scientist';
+              document.querySelector('p').textContent = 'Helios is hiring a Data Scientist. Responsibilities: model the data. Requirements: Python, SQL. Apply now to join our team.';
+            };
+          </script></body></html>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+      const seen = {};
+      const analyses = () => store.sentTo('/api/extension/analyze');
+      const page = await context.newPage();
+      try {
+        await page.goto(where);
+        await page.locator('#jobhelper-card-host .card .role').waitFor({ timeout: 15_000 });
+        await page.waitForTimeout(1500);
+        const before = analyses().length;
+        await page.evaluate(() => {
+          location.hash = 'details';
+        });
+        await page.waitForTimeout(2500);
+        seen.afterFragment = analyses().length - before;
+        store.role = 'Data Scientist';
+        const sent = analyses().length;
+        await page.evaluate(() => window.goNext());
+        for (let i = 0; i < 60 && !analyses().slice(sent).some((h) => h.body.includes('data-scientist')); i++) await page.waitForTimeout(250);
+        const body = (() => {
+          try {
+            return JSON.parse(analyses().slice(sent).find((h) => h.body.includes('data-scientist'))?.body ?? 'null');
+          } catch {
+            return null;
+          }
+        })();
+        seen.url = body?.url ?? null;
+        seen.leftover = /"title":"Platform Engineer"/.test(body?.html ?? '');
+        seen.sentHtml = Boolean(body?.html);
+      } finally {
+        await page.close();
+        site.close();
+        store.role = 'Platform Engineer';
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+      check('a fragment that is not a route does not read the page again', seen.afterFragment === 0, JSON.stringify(seen));
+      check('the next posting is read after the route change', /data-scientist/.test(seen.url ?? '') && seen.sentHtml, JSON.stringify(seen));
+      check('without the last posting’s JobPosting block in it', seen.leftover === false, JSON.stringify(seen));
+    }
+
+    /*
+     * Pointed at another ResumeM-M.
+     *
+     * A save is a name, and only a name on the server that gave it: after the
+     * address changed, the trail still said "work", the writes went to the new
+     * server under it, and that one's "work" agreed. A change of origin
+     * forgets every save — trails, branch stashes, parked work and the
+     * worker's own map — and a page read before it refuses to write until it
+     * is reloaded; the reload reads it from the new server and binds to that.
+     */
+    group('Changing the server forgets which save an application was in');
+    {
+      const other = await fakeStore();
+      other.save = 'elsewhere';
+      const seen = {};
+      try {
+        store.save = 'work';
+        await ask(driver, 'clearTrail', {});
+        await ask(driver, 'analyze', { url: 'http://moved.example/jobs/1', title: 'Helios', html: '<p>one</p>', company: 'Helios' });
+        await ask(driver, 'saveWork', { work: { letter: 'Dear Helios, about the move.' } });
+        const sw = context.serviceWorkers()[0] ?? worker;
+        // A parked letter and a branch stash, as a closed tab and a branch leave them.
+        await sw.evaluate(() =>
+          chrome.storage.session.set({
+            'jh-orphan:http://moved.example/jobs/2': { parked: [{ work: { letter: 'parked' }, save: 'work', tab: 999999, at: Date.now() }], at: Date.now() },
+            'jh-branched:999998': { trail: { pages: [], save: 'work', at: Date.now() }, at: Date.now() },
+          }),
+        );
+        const driverTab = await driver.evaluate(async () => (await chrome.tabs.getCurrent()).id);
+        seen.boundBefore = await sw.evaluate(async (id) => (await chrome.storage.session.get(`trail:${id}`))[`trail:${id}`]?.save ?? null, driverTab);
+        await driver.evaluate((s) => chrome.storage.sync.set({ serverUrl: s }), other.base);
+        await driver.waitForTimeout(800);
+        seen.saves = await sw.evaluate(async () => {
+          const all = await chrome.storage.session.get(null);
+          const found = [];
+          const look = (key, value, depth = 0) => {
+            if (!value || typeof value !== 'object' || depth > 4) return;
+            if (typeof value.save === 'string') found.push(key);
+            for (const v of Object.values(value)) look(key, v, depth + 1);
+          };
+          for (const [key, value] of Object.entries(all)) if (/^(trail|jh-orphan|jh-branched)/.test(key)) look(key, value);
+          return found;
+        });
+        const hitsBefore = other.hits.length;
+        const refused = await ask(driver, 'saveAnswer', { question: 'Why us?', answer: 'Moved.', label: 'Helios' });
+        seen.refused = refused.reply;
+        seen.reached = other.hits.slice(hitsBefore).filter((h) => h.url === '/api/answers/save').length;
+        // The page read again, from the new server.
+        await ask(driver, 'analyze', { url: 'http://moved.example/jobs/1', title: 'Helios', html: '<p>one</p>', company: 'Helios' });
+        const after = other.hits.length;
+        const again = await ask(driver, 'saveAnswer', { question: 'Why us?', answer: 'Reloaded.', label: 'Helios' });
+        seen.again = again.reply;
+        seen.againSave = other.hits.slice(after).find((h) => h.url === '/api/answers/save')?.project ?? null;
+      } finally {
+        await driver.evaluate((s) => chrome.storage.sync.set({ serverUrl: s }), store.base);
+        await driver.waitForTimeout(500);
+        await (context.serviceWorkers()[0] ?? worker)
+          .evaluate(() => chrome.storage.session.remove(['jh-orphan:http://moved.example/jobs/2', 'jh-branched:999998']))
+          .catch(() => undefined);
+        await ask(driver, 'clearTrail', {});
+        other.close();
+      }
+      check('the application was bound to the first server’s save', seen.boundBefore === 'work', JSON.stringify(seen));
+      check('no trail, branch or parked letter still names a save', Array.isArray(seen.saves) && seen.saves.length === 0, JSON.stringify(seen.saves));
+      check(
+        'a write before the page is read again is refused, saying to reload',
+        seen.refused?.ok === false && /Reload this page/.test(seen.refused?.error ?? '') && seen.reached === 0,
+        JSON.stringify(seen),
+      );
+      check('and after the page is read again it goes to the new server’s save', seen.again?.ok === true && seen.againSave === 'elsewhere', JSON.stringify(seen));
+    }
+
+    /*
+     * The keeper's two-second save, with nothing new to say.
+     *
+     * Every tick rewrote the whole trail, page markup and all, and now the
+     * copy kept for an extension reload with it. Unchanged work written
+     * within the last thirty seconds is not written again.
+     */
+    group('An idle card writes nothing');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/idle-platform-engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+      const seen = {};
+      const page = await context.newPage();
+      const sw = context.serviceWorkers()[0] ?? worker;
+      try {
+        await page.goto(where);
+        await page.locator('#jobhelper-card-host .card .role').waitFor({ timeout: 15_000 });
+        await page.waitForTimeout(5000);
+        seen.saves = await sw.evaluate(async () => {
+          globalThis.__jhWrites = [];
+          globalThis.__jhSaves = 0;
+          for (const area of ['session', 'local']) {
+            const store = chrome.storage[area];
+            if (store.__jhWrapped) continue;
+            const real = store.set.bind(store);
+            store.set = (items, ...rest) => {
+              globalThis.__jhWrites.push(...Object.keys(items ?? {}).map((k) => `${area}:${k}`));
+              return real(items, ...rest);
+            };
+            store.__jhWrapped = real;
+          }
+          return true;
+        });
+        await page.waitForTimeout(10_000);
+        seen.writes = await sw.evaluate(() => (globalThis.__jhWrites ?? []).filter((k) => /trail:|jh-mirror:/.test(k)));
+        seen.trail = await sw.evaluate(async (url) => {
+          const [tab] = await chrome.tabs.query({ url });
+          const key = `trail:${tab?.id}`;
+          return Boolean((await chrome.storage.session.get(key))[key]?.work);
+        }, where);
+      } finally {
+        await sw
+          .evaluate(() => {
+            for (const area of ['session', 'local']) {
+              const store = chrome.storage[area];
+              if (store.__jhWrapped) {
+                store.set = store.__jhWrapped;
+                delete store.__jhWrapped;
+              }
+            }
+          })
+          .catch(() => undefined);
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+      check('the card’s work is held in the trail', seen.trail === true, JSON.stringify(seen));
+      check('and ten idle seconds write nothing more', Array.isArray(seen.writes) && seen.writes.length === 0, JSON.stringify(seen.writes));
+    }
+
+    /*
      * Pairing from a card, one exchange for every tab.
      *
      * A store that refuses this extension used to leave the card with a
@@ -3365,6 +3582,152 @@ async function main() {
       check('and both are told it paired', seen.popup?.ok === true && seen.popup.data?.paired === true, JSON.stringify(seen.popup));
       check('both tabs carry on to the proposal without asking again', seen.carriedOn === true && seen.boxesAfter === 0, JSON.stringify(seen));
       check('and the token is kept for the store', typeof seen.token === 'string' && seen.token.startsWith('token-'), String(seen.token));
+    }
+
+    /*
+     * An extension reload, in the middle of an application.
+     *
+     * Everything the worker held lived in session storage, which a reload
+     * empties: the letter, every closed tab's parked work, the marks that
+     * stop a second tracker row. They are mirrored into local storage as they
+     * change and put back by the first worker on an empty session — a trail
+     * to its tab while the tab is on one of its pages, parked by address when
+     * it is not. And the card already on the page stays, read-only, saying to
+     * copy what was written and reload, instead of vanishing with it.
+     *
+     * Last, because it reloads the extension under every page here.
+     */
+    group('Work outlives a reload of the extension');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/mirror-platform-engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+      const seen = {};
+      const page = await context.newPage();
+      try {
+        await page.goto(where);
+        await page.locator('#jobhelper-card-host .card .role').waitFor({ timeout: 15_000 });
+        await page.waitForTimeout(3000);
+        // The extension page's tab: its trail names a page it is not on.
+        await ask(driver, 'clearTrail', {});
+        await ask(driver, 'analyze', { url: 'http://mirror.example/jobs/1', title: 'Vega', html: '<p>vega</p>', company: 'Vega' });
+        await ask(driver, 'saveWork', { work: { letter: 'Dear Vega, from the extension page.' } });
+        const sw = context.serviceWorkers()[0] ?? worker;
+        const pageTab = await sw.evaluate(async (url) => (await chrome.tabs.query({ url }))[0]?.id ?? null, where);
+        const driverTab = await driver.evaluate(async () => (await chrome.tabs.getCurrent()).id);
+        await sw.evaluate(() =>
+          chrome.storage.session.set({
+            'jh-held:work|Helios|Platform%20Engineer|held': { at: Date.now() },
+            'jh-held:work|Old|Gone|held': { at: Date.now() - 13 * 60 * 60 * 1000 },
+          }),
+        );
+        await page.waitForTimeout(1000);
+        seen.mirror = await sw.evaluate(async ([a, b]) => {
+          const all = await chrome.storage.local.get(null);
+          const trailA = all[`jh-mirror:trail:${a}`];
+          return {
+            pageTrail: Boolean(trailA),
+            withoutMarkup: Boolean(trailA) && (trailA.pages ?? []).every((p) => !('html' in p)),
+            driverTrail: Boolean(all[`jh-mirror:trail:${b}`]?.work?.letter),
+            held: Boolean(all['jh-mirror:jh-held:work|Helios|Platform%20Engineer|held']),
+          };
+        }, [pageTab, driverTab]);
+        // The page's trail carries a letter too, so there is something to find.
+        await sw.evaluate(async (tab) => {
+          const key = `trail:${tab}`;
+          const trail = (await chrome.storage.session.get(key))[key];
+          if (trail) await chrome.storage.session.set({ [key]: { ...trail, work: { ...(trail.work ?? {}), letter: 'Dear Helios, kept across a reload.' }, at: Date.now() } });
+        }, pageTab);
+        await page.waitForTimeout(800);
+
+        await sw.evaluate(() => chrome.runtime.reload()).catch(() => undefined);
+        // Asked from a page of the extension, which is there again once it is.
+        let fresh = null;
+        for (let i = 0; i < 40 && !fresh; i++) {
+          await page.waitForTimeout(250);
+          const probe = await context.newPage();
+          const ok = await probe
+            .goto(`chrome-extension://${extensionId}/src/popup/popup.html`)
+            .then(() => probe.evaluate(async () => Boolean(await chrome.storage.session.get(null))))
+            .catch(() => false);
+          if (ok) fresh = probe;
+          else await probe.close().catch(() => undefined);
+        }
+        seen.restarted = Boolean(fresh);
+        await page.waitForTimeout(1500);
+        if (fresh) {
+          seen.restored = await fresh.evaluate(async ([a]) => {
+            const all = await chrome.storage.session.get(null);
+            const parked = all['jh-orphan:http://mirror.example/jobs/1'];
+            return {
+              pageLetter: all[`trail:${a}`]?.work?.letter ?? null,
+              parked: (parked?.parked ?? []).map((p) => p.work?.letter ?? null),
+              held: Boolean(all['jh-held:work|Helios|Platform%20Engineer|held']),
+              staleHeld: Boolean(all['jh-held:work|Old|Gone|held']),
+            };
+          }, [pageTab]);
+        }
+        // The card that was on the page when it happened.
+        await page.waitForFunction(
+          () => /JobHelper was updated/.test(document.querySelector('#jobhelper-card-host')?.shadowRoot?.textContent ?? ''),
+          null,
+          { timeout: 10_000 },
+        ).catch(() => undefined);
+        seen.card = await page.evaluate(() => {
+          const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+          if (!root) return { there: false };
+          const buttons = [...root.querySelectorAll('button')];
+          const named = (b) => `${b.textContent.trim()}|${b.getAttribute('aria-label') ?? ''}`;
+          return {
+            there: true,
+            said: /JobHelper was updated — copy what you wrote, then reload the page\./.test(root.textContent),
+            boxes: [...root.querySelectorAll('textarea, input:not([type=checkbox]):not([type=radio]):not([type=file])')].map((b) => b.readOnly || b.disabled),
+            live: buttons.filter((b) => !b.disabled).map(named),
+            off: buttons.filter((b) => b.disabled).length,
+          };
+        });
+        // Fold still works, and the redraw it causes does not switch anything back on.
+        const fold = page.locator('#jobhelper-card-host button[data-focus="fold"]');
+        if (await fold.count()) {
+          await fold.click();
+          await page.waitForTimeout(300);
+          await fold.click();
+          await page.waitForTimeout(300);
+          seen.afterRedraw = await page.evaluate(() => {
+            const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+            return [...(root?.querySelectorAll('button') ?? [])]
+              .filter((b) => !b.disabled)
+              .map((b) => `${b.textContent.trim()}|${b.getAttribute('aria-label') ?? ''}`);
+          });
+        }
+      } finally {
+        await page.close().catch(() => undefined);
+        site.close();
+      }
+      const onlyKept = (list) =>
+        Array.isArray(list) && list.every((n) => /^Copy|^[⌃⌄]\|Fold|^[⌃⌄]\|Unfold|\|Close JobHelper on this page$/.test(n));
+      check('the trail is mirrored into local storage, without its markup', seen.mirror?.pageTrail && seen.mirror.withoutMarkup, JSON.stringify(seen.mirror));
+      check('and so are another tab’s work and a held-space mark', seen.mirror?.driverTrail && seen.mirror.held, JSON.stringify(seen.mirror));
+      check('the extension came back', seen.restarted === true, JSON.stringify(seen));
+      check('the trail is back in its tab, which is still on its page', /kept across a reload/.test(seen.restored?.pageLetter ?? ''), JSON.stringify(seen.restored));
+      check(
+        'a trail whose tab is gone is parked under its page’s address',
+        (seen.restored?.parked ?? []).some((l) => /from the extension page/.test(l ?? '')),
+        JSON.stringify(seen.restored),
+      );
+      check('a held-space mark comes back, one past twelve hours does not', seen.restored?.held === true && seen.restored?.staleHeld === false, JSON.stringify(seen.restored));
+      check('the card stays on the page and says to copy and reload', seen.card?.there === true && seen.card.said === true, JSON.stringify(seen.card));
+      check('its text boxes are read-only', (seen.card?.boxes ?? []).every(Boolean), JSON.stringify(seen.card));
+      check('only Copy, Fold and × still work', seen.card?.off > 0 && onlyKept(seen.card?.live), JSON.stringify(seen.card));
+      check('and still only those after a redraw', seen.afterRedraw !== undefined && onlyKept(seen.afterRedraw), JSON.stringify(seen.afterRedraw));
     }
   } finally {
     await context.close();

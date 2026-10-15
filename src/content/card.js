@@ -1010,9 +1010,78 @@ export function shortAddress(url, max = 32) {
 
 export function removeCard() {
   live?.stop();
+  live?.retired?.disconnect();
   live?.host.remove();
   live = null;
   document.getElementById(HOST_ID)?.remove();
+}
+
+/** What a retired card says, above whatever it was showing. See `retireCard`. */
+export const RETIRED_SAID = 'JobHelper was updated — copy what you wrote, then reload the page.';
+
+/*
+ * The buttons a retired card still has: Copy, which is the way out for what
+ * was written; Fold and Unfold; and the ×. Everything else asked the
+ * extension for something, and that extension is gone.
+ */
+const STILL_WORKS = (button) =>
+  /^Copy\b/i.test(button.textContent.trim()) ||
+  button.dataset?.focus === 'fold' ||
+  button.getAttribute('aria-label') === 'Close JobHelper on this page';
+
+/**
+ * The extension this card belongs to was reloaded or updated under the page.
+ *
+ * Taking the card away took whatever was typed into it with it — a letter
+ * half-written when Chrome updated the extension was simply gone from the
+ * screen. So the card stays, says what happened, and keeps what is on it
+ * readable and copyable: text boxes read-only, Copy, Fold and × working, and
+ * every other button and control off — on every redraw too, since nothing
+ * it would ask for can answer now.
+ */
+export function retireCard() {
+  if (!live || live.retired) return;
+  const { root } = live;
+  if (!root) return;
+  const apply = () => {
+    const card = root.querySelector('.card');
+    if (!card) return;
+    if (!card.querySelector('.jh-retired')) {
+      const note = document.createElement('div');
+      note.className = 'jh-retired';
+      note.setAttribute('role', 'alert');
+      note.textContent = RETIRED_SAID;
+      Object.assign(note.style, {
+        background: '#fff4e5',
+        color: '#5f3700',
+        borderBottom: '1px solid #f0c890',
+        padding: '8px 12px',
+        fontSize: '13px',
+        lineHeight: '1.4',
+      });
+      const head = card.querySelector('.head');
+      if (head) head.after(note);
+      else card.prepend(note);
+    }
+    for (const el of root.querySelectorAll('button')) {
+      if (!el.disabled && !STILL_WORKS(el)) el.disabled = true;
+    }
+    for (const el of root.querySelectorAll('textarea, input, select, [contenteditable]')) {
+      const typed =
+        el.localName === 'textarea' ||
+        (el.localName === 'input' && !/^(button|checkbox|radio|submit|reset|image|file|range|color|hidden)$/i.test(el.type));
+      if (typed) {
+        if (!el.readOnly) el.readOnly = true;
+      } else if (el.localName === 'input' || el.localName === 'select') {
+        if (!el.disabled) el.disabled = true;
+      } else if (el.isContentEditable) el.setAttribute('contenteditable', 'false');
+    }
+  };
+  const watch = new MutationObserver(apply);
+  // And a control a redraw switched back on without replacing it.
+  watch.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled', 'readonly', 'contenteditable'] });
+  live.retired = watch;
+  apply();
 }
 
 /**
@@ -1476,6 +1545,8 @@ export function createCard({
   for (const type of PRESSES) host.addEventListener(type, keepToCard);
   live = {
     host,
+    // For `retireCard`, which has to reach what is drawn inside it.
+    root,
     stop: () => {
       document.removeEventListener('focusin', onFocus, true);
       clearTimeout(lookSoon);

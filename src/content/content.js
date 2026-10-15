@@ -188,8 +188,18 @@
     }
   };
 
+  /*
+   * The card's module once it has loaded, kept: when this copy is orphaned
+   * nothing more can be loaded from the extension, and the card has to be
+   * told so (`retireCard`) rather than left with every button throwing.
+   */
+  let cardModule = null;
   const imports = {
-    card: () => fromExtension('src/content/card.js'),
+    card: () =>
+      fromExtension('src/content/card.js').then((m) => {
+        cardModule = m;
+        return m;
+      }),
     ask: () => fromExtension('src/content/ask.js'),
     sites: () => fromExtension('src/shared/sites.js'),
     autofill: () => fromExtension('src/content/autofill.js'),
@@ -256,10 +266,94 @@
     });
   }
 
-  function decisiveSignal() {
-    for (const tag of document.querySelectorAll('script[type="application/ld+json"]')) {
-      if (/"@type"\s*:\s*"?JobPosting/i.test(tag.textContent ?? '')) return true;
+  /*
+   * The page's JSON-LD, read as the JSON it is.
+   *
+   * A regular expression for `"@type": "JobPosting"` missed the shapes real
+   * pages write — `"@type": ["JobPosting"]`, a posting inside `@graph`, or
+   * nested in an `ItemList` — and matched a posting named in a string. Read
+   * as JSON, walked whole; the old test only when the block is not JSON.
+   */
+  const LD_SELECTOR = 'script[type="application/ld+json"]';
+  const isPostingType = (type) =>
+    (Array.isArray(type) ? type : [type]).some((t) => typeof t === 'string' && /(?:^|[/:#])JobPosting$/i.test(t.trim()));
+  function readLd(text) {
+    const said = { posting: false, titles: [] };
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      said.posting = /"@type"\s*:\s*\[?\s*"?JobPosting/i.test(text);
+      return said;
     }
+    const seen = new Set();
+    const walk = (node, depth) => {
+      if (!node || typeof node !== 'object' || depth > 12 || seen.has(node)) return;
+      seen.add(node);
+      if (Array.isArray(node)) {
+        for (const item of node) walk(item, depth + 1);
+        return;
+      }
+      if (isPostingType(node['@type'])) {
+        said.posting = true;
+        const title = typeof node.title === 'string' ? node.title : typeof node.name === 'string' ? node.name : '';
+        if (title.trim()) said.titles.push(title.trim());
+      }
+      for (const value of Object.values(node)) if (value && typeof value === 'object') walk(value, depth + 1);
+    };
+    walk(data, 0);
+    return said;
+  }
+
+  /*
+   * Each JSON-LD block's text as the page was first loaded, and whether the
+   * page has routed since.
+   *
+   * A single-page board that pushes the next posting's address and redraws
+   * its heading leaves the first posting's JobPosting block in the head. The
+   * card read it, and named the job before: measured, pushState from Platform
+   * Engineer to Data Scientist and the card said Platform Engineer. After a
+   * route change a posting block is taken for a leftover — ignored here, and
+   * dropped from the page sent to be read — when it has not changed since the
+   * page loaded and does not name the role the page now shows, or when it
+   * names a job that shares no word with it.
+   */
+  const ldAtLoad = new Set();
+  try {
+    for (const tag of document.querySelectorAll(LD_SELECTOR)) ldAtLoad.add(tag.textContent ?? '');
+  } catch {
+    // No document to read yet.
+  }
+  let routedSinceLoad = false;
+  const squash = (text) => String(text ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  function staleLd(text, said = readLd(text)) {
+    if (!routedSinceLoad || !said.posting) return false;
+    const title = squash(document.title);
+    const h1 = squash(document.querySelector('h1')?.textContent);
+    const here = `${title} ${h1}`;
+    const names = (job) => {
+      const t = squash(job);
+      return Boolean(t) && (here.includes(t) || (h1.length > 2 && t.includes(h1)));
+    };
+    if (ldAtLoad.has(text)) return !said.titles.some(names);
+    return (
+      said.titles.length > 0 &&
+      typeof plainlyAnotherRole === 'function' &&
+      said.titles.every((job) => plainlyAnotherRole(job, here))
+    );
+  }
+  /** Whether a block on the page now says this is a posting. */
+  function postingInLd() {
+    for (const tag of document.querySelectorAll(LD_SELECTOR)) {
+      const text = tag.textContent ?? '';
+      const said = readLd(text);
+      if (said.posting && !staleLd(text, said)) return true;
+    }
+    return false;
+  }
+
+  function decisiveSignal() {
+    if (postingInLd()) return true;
     return namesARole();
   }
 
@@ -438,12 +532,7 @@
     // megabytes of DOM to regex-test it is the most expensive thing this
     // script could do, and it runs on every page you visit. The JSON-LD blocks
     // are the only part that matters, and they can be read directly.
-    for (const tag of document.querySelectorAll('script[type="application/ld+json"]')) {
-      if (/"@type"\s*:\s*"?JobPosting/i.test(tag.textContent ?? '')) {
-        score += 6;
-        break;
-      }
-    }
+    if (postingInLd()) score += 6;
     if (onATracker()) {
       score += 4;
     }
@@ -1774,7 +1863,8 @@
     return {
       url: location.href,
       title: document.title,
-      html: trimForStorage(pageHtml(document), 2_000_000),
+      // Without the posting a route change left behind. See `staleLd`.
+      html: trimForStorage(pageHtml(document, { dropJsonLd: (text) => staleLd(text) }), 2_000_000),
     };
   }
 
@@ -3001,6 +3091,157 @@
     });
   }
 
+  /* ---------------- Which frames a person can actually see -------------- */
+
+  /*
+   * Autofill used to hand the person's name, email, phone and LinkedIn to
+   * every frame on the page that held something application-shaped — and a
+   * frame can be one pixel square, off the page, or fully transparent. A
+   * cross-origin 1×1 frame at opacity 0 with an application form in it was
+   * filled like the real one.
+   *
+   * Only the page around a frame can see how it is shown, and a content
+   * script cannot learn its own frame id or its children's. So every
+   * document hands each of its child frames a random token (by postMessage,
+   * accepted only from the window directly above), and tells the worker,
+   * when asked, which of its children's tokens went to frames it can see.
+   * The worker fills only the frames it can reach from the top through
+   * visible frames. See `visibleFrames` in the worker.
+   */
+  const TOKEN_MESSAGE = 'jobhelper-frame-token';
+  const ASK_TOKEN_MESSAGE = 'jobhelper-frame-token-please';
+  /** The token this document's parent gave it, if it is a frame. */
+  let myFrameToken = null;
+  /** One token per child browsing context, kept across its navigations. */
+  const childTokens = new WeakMap();
+  const newToken = () => {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  };
+  /** Every frame element in this document, shadow roots included. */
+  const childFrames = () => {
+    const out = [];
+    const walk = (root) => {
+      for (const el of root.querySelectorAll('*')) {
+        if (el.localName === 'iframe' || el.localName === 'frame') out.push(el);
+        if (el.shadowRoot) walk(el.shadowRoot);
+      }
+    };
+    try {
+      walk(document);
+    } catch {
+      // A document with nothing in it yet.
+    }
+    return out;
+  };
+  const tokenFor = (win) => {
+    let token = childTokens.get(win);
+    if (!token) {
+      token = newToken();
+      childTokens.set(win, token);
+    }
+    return token;
+  };
+  const handTokens = () => {
+    for (const el of childFrames()) {
+      const win = el.contentWindow;
+      if (!win) continue;
+      try {
+        win.postMessage({ [TOKEN_MESSAGE]: tokenFor(win) }, '*');
+      } catch {
+        // A frame being torn down.
+      }
+    }
+  };
+  /**
+   * Whether a person could see this frame: not hidden, not transparent, on
+   * the page and big enough to hold a form somebody would fill in.
+   */
+  const MIN_FRAME_W = 200;
+  const MIN_FRAME_H = 120;
+  const frameShown = (el) => {
+    try {
+      if (el.checkVisibility && !el.checkVisibility({ visibilityProperty: true })) return false;
+      const box = el.getBoundingClientRect();
+      if (box.width < MIN_FRAME_W || box.height < MIN_FRAME_H) return false;
+      const scroller = document.scrollingElement ?? document.documentElement;
+      const pageW = Math.max(scroller?.scrollWidth ?? 0, window.innerWidth);
+      const pageH = Math.max(scroller?.scrollHeight ?? 0, window.innerHeight);
+      const left = box.left + window.scrollX;
+      const top = box.top + window.scrollY;
+      if (left + box.width <= 0 || top + box.height <= 0 || left >= pageW || top >= pageH) return false;
+      if (getComputedStyle(el).visibility !== 'visible') return false;
+      let opacity = 1;
+      for (let node = el; node; ) {
+        if (node.nodeType === 1) {
+          const style = getComputedStyle(node);
+          if (style.display === 'none') return false;
+          const own = Number.parseFloat(style.opacity);
+          opacity *= Number.isFinite(own) ? own : 1;
+          if (opacity < 0.1) return false;
+        }
+        node = node.parentElement ?? node.parentNode?.host ?? null;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const onTokenMessage = (event) => {
+    const data = event.data;
+    if (!data || typeof data !== 'object') return;
+    // A token, from the window directly above this one and nowhere else.
+    if (typeof data[TOKEN_MESSAGE] === 'string' && window.top !== window && event.source === window.parent) {
+      if (/^[0-9a-f]{32}$/.test(data[TOKEN_MESSAGE])) myFrameToken = data[TOKEN_MESSAGE];
+      return;
+    }
+    // A child asking for its token, having loaded after this document handed them out.
+    if (data[ASK_TOKEN_MESSAGE] === true && event.source) {
+      const el = childFrames().find((f) => f.contentWindow === event.source);
+      if (!el) return;
+      try {
+        event.source.postMessage({ [TOKEN_MESSAGE]: tokenFor(event.source) }, '*');
+      } catch {
+        // Gone.
+      }
+    }
+  };
+  /*
+   * Armed again whenever asked: a frame whose document was rewritten with
+   * `document.open()` has lost every listener on its window, this one included.
+   */
+  const armTokens = () => {
+    window.addEventListener('message', onTokenMessage);
+    if (window.top !== window && !myFrameToken) {
+      try {
+        window.parent.postMessage({ [ASK_TOKEN_MESSAGE]: true }, '*');
+      } catch {
+        // No parent to ask.
+      }
+    }
+    handTokens();
+  };
+  armTokens();
+  teardown.push(() => window.removeEventListener('message', onTokenMessage));
+  const onTokenAsk = (message, _sender, sendResponse) => {
+    if (message?.type !== 'jh-frame-tokens') return false;
+    if (message.payload?.arm) armTokens();
+    const visible = [];
+    for (const el of childFrames()) {
+      const win = el.contentWindow;
+      if (win && frameShown(el)) visible.push(tokenFor(win));
+    }
+    sendResponse({ ok: true, data: { mine: myFrameToken, visible } });
+    return false;
+  };
+  chrome.runtime.onMessage.addListener(onTokenAsk);
+  teardown.push(() => chrome.runtime.onMessage.removeListener(onTokenAsk));
+
+  /** A frame too small to be read, or not being shown at all, fills nothing. */
+  const frameTooSmallOrHidden = () =>
+    document.hidden || window.innerWidth < MIN_FRAME_W || window.innerHeight < MIN_FRAME_H;
+
   /* ------------------------ Frames other than this one ------------------ */
 
   /**
@@ -3241,6 +3482,11 @@
          * form across an embed put the attachment control in the embed.
          */
         case 'jh-frame-attach':
+          // Nothing into a frame nobody can see. See `frameTooSmallOrHidden`.
+          if (frameTooSmallOrHidden()) {
+            sendResponse({ ok: true, data: { placed: [], unplaced: [], boxes: 0, refused: true } });
+            return false;
+          }
           answer(
             Promise.all([imports.attach(), imports.autofill()]).then(
               ([{ attachFiles }, { looksLikeApplicationForm }]) =>
@@ -3295,6 +3541,12 @@
           return true;
 
         case 'jh-frame-fill':
+          // Nothing about the person into a frame nobody can see: one pixel
+          // square, or not being shown at all.
+          if (frameTooSmallOrHidden()) {
+            sendResponse({ ok: true, data: { filled: [], skipped: [], refused: true } });
+            return false;
+          }
           answer(
             imports.autofill().then((autofill) => {
               // The one that must not be got wrong. Anything else on the page
@@ -3686,6 +3938,15 @@
     }
   };
 
+  /** Two addresses that differ only in a fragment that is not a route. */
+  const onlyTheFragmentMoved = (before, after) => {
+    const [restA, ...hashA] = String(before).split('#');
+    const [restB, ...hashB] = String(after).split('#');
+    if (restA !== restB) return false;
+    const routeLike = (hash) => /^!?\//.test(hash);
+    return !routeLike(hashA.join('#')) && !routeLike(hashB.join('#'));
+  };
+
   /**
    * Start this page again, as though it had just been opened.
    *
@@ -3713,6 +3974,8 @@
    * with the flag left off, `persisted` is true and the state is still there.
    */
   const startOver = () => {
+    // A posting's JSON-LD from before now may be a leftover. See `staleLd`.
+    routedSinceLoad = true;
     /*
      * Save before anything else. On a single-page board this is the only
      * kind of navigation there is — `pagehide` never fires — and the card
@@ -3804,7 +4067,16 @@
 
   every(1000, () => {
     if (location.href !== lastUrl) {
+      const was = lastUrl;
       lastUrl = location.href;
+      /*
+       * Not when only the fragment moved. A table of contents, a "#apply"
+       * link, a tab strip that writes its tab into the hash — each one took
+       * the card down and built it again, letter and all, on the same page.
+       * Except where the fragment is the route: `#/jobs/2` and `#!/jobs/2`
+       * are how a hash-routed board goes to another posting.
+       */
+      if (onlyTheFragmentMoved(was, lastUrl)) return;
       readAs = null;
       return startOver();
     }
@@ -3871,12 +4143,24 @@
   watchForSending().catch(() => undefined);
   wantReceiptIfApplying();
 
-  // And once the card exists, orphaning takes it off the page: a card whose
-  // buttons all throw is worse than no card.
+  /*
+   * And once the card exists, orphaning retires it rather than taking it off
+   * the page: what somebody wrote on it is still on it, read-only, with Copy
+   * working and a line saying to reload (`retireCard`). Taken away, a letter
+   * half-written when the extension updated went with it. The module is the
+   * one already loaded — nothing more can be loaded from an extension that
+   * has gone.
+   */
   teardown.push(() => {
-    imports.card().then(({ removeCard }) => removeCard()).catch(() => undefined);
-    // Same reasoning: a chip whose Yes throws is worse than no chip.
-    imports.ask().then(({ removeAsk }) => removeAsk()).catch(() => undefined);
+    try {
+      if (cardModule?.retireCard) cardModule.retireCard();
+      else cardModule?.removeCard?.();
+    } catch {
+      // Best effort, like the rest of tearing down.
+    }
+    // The chip, though, goes: a chip whose Yes throws is worse than no chip.
+    // Directly, since its module cannot be loaded now.
+    document.getElementById('jobhelper-ask-host')?.remove();
     cardHandle = null;
     stopChoices?.();
     typedWatch?.stop();

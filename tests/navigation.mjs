@@ -33,6 +33,8 @@ import {
   EMBEDDED_BOARD,
   EMBEDDED_POSTING,
   FRAMED_ROLE,
+  HIDDEN_FRAMES,
+  WRITTEN_FRAMES,
   LATE_RENDER,
   LETTER_SPA,
   LETTER_SPA_PLAIN,
@@ -68,7 +70,7 @@ import {
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
 /** What this suite files under; cleared before it starts as well as after. */
-const MINE = ['Vega', 'Lyra', 'Orion', 'Acme', 'Nova', 'Rigel', 'Altair', 'Cygnus', 'Vireo', 'Lyricus', 'Vela', 'Mensa Labs', 'Meridian'];
+const MINE = ['Vega', 'Lyra', 'Orion', 'Acme', 'Nova', 'Rigel', 'Altair', 'Cygnus', 'Vireo', 'Lyricus', 'Vela', 'Mensa Labs', 'Meridian', 'Tarazed', 'Sadr'];
 
 /*
  * What the running store can actually fill with.
@@ -236,7 +238,7 @@ async function main() {
   // Two origins, so the careers-site-to-ATS hand-off is a genuine cross-host
   // navigation rather than two paths on one server.
   const ats = await serveFixtures(undefined, { hostname: 'localhost' });
-  const fixtures = await serveFixtures(undefined, { vars: { ATS: `${ats.base}${ATS_FORM.path}` } });
+  const fixtures = await serveFixtures(undefined, { vars: { ATS: `${ats.base}${ATS_FORM.path}`, OTHER: ats.base } });
 
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-nav-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
@@ -902,6 +904,81 @@ async function main() {
       const inserted = await frame?.evaluate(() => document.getElementById('q1').value);
       check('an answer written on the card lands in the frame', /read the code/.test(inserted ?? ''), inserted);
 
+      await page.close();
+    }
+
+    /* ---- Frames nobody can see get nothing about the person ---- */
+    /*
+     * Autofill handed name, email, phone and LinkedIn to every frame holding
+     * something application-shaped, however it was shown: a cross-origin
+     * frame one pixel square, or at opacity 0, or off the page, or hidden,
+     * was filled like the form in plain view. Only the visible one may be.
+     */
+    group('Frames nobody can see are not filled');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(HIDDEN_FRAMES), { waitUntil: 'load' });
+      await settled(page);
+      await page.waitForTimeout(2500);
+      const card = cardOf(page);
+      const button = card.getByRole('button', { name: 'Autofill this form' });
+      const offered = await button.count();
+      check('hidden frames: the card offers to fill the visible form', offered === 1, `${offered} buttons`);
+      if (offered) await button.click();
+      await page.waitForTimeout(3500);
+      const read = async (id) => {
+        const frame = page.frames().find((f) => f.url().endsWith(`/hidden-frames/form/${id}`));
+        return frame
+          ?.evaluate(() => ['fn', 'em', 'ph', 'li'].map((k) => document.getElementById(k)?.value ?? '').filter(Boolean))
+          .catch(() => null);
+      };
+      const wanted = [offeredFields.first_name, offeredFields.email, offeredFields.phone].filter(Boolean).length;
+      const seen = await read('seen');
+      check(
+        'the visible 600×400 frame on another origin is still filled',
+        wanted > 0 && (seen?.length ?? 0) >= Math.min(wanted, 1),
+        JSON.stringify(seen),
+      );
+      for (const [id, what] of [
+        ['tiny', 'a 1×1 frame'],
+        ['clear', 'a full-size frame at opacity 0'],
+        ['away', 'a frame off the page'],
+        ['unseen', 'a frame under visibility: hidden'],
+      ]) {
+        const got = await read(id);
+        check(`${what} is given nothing`, Array.isArray(got) && got.length === 0, JSON.stringify(got));
+      }
+      await page.close();
+    }
+
+    /* ---- Frames with no address of their own ---- */
+    /*
+     * A `srcdoc` frame, and an empty one the page writes its form into with
+     * `document.write` after it has loaded. The content script never ran in
+     * either (`match_about_blank`, `match_origin_as_fallback`), and the
+     * written one has had every listener on its window taken away by
+     * `document.open`.
+     */
+    group('Forms in srcdoc and written frames are filled');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(WRITTEN_FRAMES), { waitUntil: 'load' });
+      await settled(page);
+      await page.waitForTimeout(3000);
+      const card = cardOf(page);
+      const button = card.getByRole('button', { name: 'Autofill this form' });
+      if (await button.count()) await button.click();
+      await page.waitForTimeout(3500);
+      const read = (selector) =>
+        page
+          .frameLocator(selector)
+          .locator('body')
+          .evaluate(() => ['fn', 'em', 'ph'].map((k) => document.getElementById(k)?.value ?? '').filter(Boolean))
+          .catch(() => null);
+      const sourced = await read('#sourced');
+      const written = await read('#written');
+      check('a srcdoc frame is filled', (sourced?.length ?? 0) > 0, JSON.stringify(sourced));
+      check('and a frame written with document.write', (written?.length ?? 0) > 0, JSON.stringify(written));
       await page.close();
     }
 
