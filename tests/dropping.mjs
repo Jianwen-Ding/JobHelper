@@ -45,7 +45,20 @@ const OURS = { name: 'Morgan-Testwell-Resume.pdf', base64: btoa('%PDF-1.4 ours')
  * runs. The step carries its contact section so the frame passes the
  * application-form guard a frame has to pass. See tests/linkedin-easy-apply.mjs.
  */
-const LINKEDIN = ['plain', 'shadow'].flatMap((v) => [
+/*
+ * And the variants the user's own page turned out to need: the step in a
+ * closed shadow root, and — what the page actually had — no file input at all
+ * until "Upload resume" is pressed, the input made then and clicked detached,
+ * or put in, clicked and taken out. See tests/linkedin-easy-apply.mjs.
+ */
+const LI_OPTIONS = {
+  plain: {},
+  shadow: { shadow: true },
+  closed: { closed: true },
+  detached: { shadow: true, picker: 'detached' },
+  transient: { shadow: true, picker: 'transient' },
+};
+const LINKEDIN = Object.keys(LI_OPTIONS).flatMap((v) => [
   {
     name: `linkedin-top-${v}`,
     path: `/li/top-${v}`,
@@ -65,7 +78,7 @@ const LINKEDIN = ['plain', 'shadow'].flatMap((v) => [
   {
     name: `linkedin-frame-${v}`,
     path: `/li/frame-${v}`,
-    html: easyApply({ shadow: v === 'shadow', guard: true, contact: true }),
+    html: easyApply({ ...LI_OPTIONS[v], guard: true, contact: true }),
   },
 ]);
 
@@ -229,6 +242,127 @@ async function main() {
         const r = await letGoOver('footer');
         check('the footer under Back and Next: nothing goes in', r.armed && r.held.length === 0 && r.uploads.length === 0, JSON.stringify(r));
       }
+      await top.close();
+    }
+
+    /*
+     * The same step as the user's own page has it, and in a closed root.
+     *
+     * Reported from a real LinkedIn job: the resume chip let go of on Upload
+     * resume said "Nothing was attached. Jianwen-Ding-Resume.pdf had nowhere
+     * to go — there is no upload box where you dropped it", and Attach files
+     * failed too. A console probe found no file input anywhere — the button
+     * makes one when pressed. Driven here with the extension loaded, so the
+     * answer comes through the real picker.js in the page's world: a real
+     * pointer drags the chip onto the button, then Attach files is asked of
+     * the frame exactly as the worker asks it, then the person presses the
+     * button themselves and must get the browser's own dialog.
+     */
+    await worker.evaluate(() => {
+      self.__dropReports = [];
+      chrome.runtime.onMessage.addListener((m) => {
+        if (m?.type === 'droppedInFrame') self.__dropReports.push(m.payload?.report ?? null);
+      });
+    });
+    for (const variant of ['closed', 'detached', 'transient']) {
+      group(`LinkedIn Easy Apply (${variant}): the resume chip let go of on Upload resume, then Attach files`);
+      const top = await context.newPage();
+      await top.setViewportSize({ width: 1240, height: 900 });
+      let choosers = 0;
+      top.on('filechooser', () => {
+        choosers += 1;
+      });
+      const topUrl = fixtures.urlFor(LINKEDIN.find((f) => f.path === `/li/top-${variant}`));
+      await top.goto(topUrl, { waitUntil: 'domcontentloaded' });
+      const liFrame = await (await top.waitForSelector('iframe')).contentFrame();
+      const ready = () => liFrame.waitForFunction(() => Boolean(window.$ea?.('[data-upload="resume"]')));
+      await ready();
+      const readPage = () =>
+        liFrame.evaluate(() => ({
+          uploads: window.linkedin.uploads.map((u) => u.name),
+          made: window.linkedin.made,
+          selected: window.$ea('[data-list="resume"] [aria-checked="true"] .jobs-document-upload-redesign-card__file-name')?.textContent ?? null,
+          complaint: window.$ea('.jobs-document-upload__error')?.textContent ?? null,
+        }));
+      const buttonAt = async () => {
+        const frameAt = await (await top.$('iframe')).boundingBox();
+        const r = await liFrame.evaluate((sel) => {
+          // In view: a new card at the top of the list pushes the button down the modal's scroll.
+          window.$ea(sel).scrollIntoView({ block: 'center' });
+          const b = window.$ea(sel).getBoundingClientRect();
+          return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        }, AIM.button);
+        return { x: frameAt.x + r.x, y: frameAt.y + r.y };
+      };
+
+      // The drag, with a real pointer.
+      await worker.evaluate(() => {
+        self.__dropReports = [];
+      });
+      const armed = await arm([OURS], topUrl);
+      const from = await top.locator('#chip').boundingBox();
+      const end = await buttonAt();
+      await top.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+      await top.mouse.down();
+      for (let i = 1; i <= 14; i++) {
+        await top.mouse.move(from.x + ((end.x - from.x) * i) / 14, from.y + ((end.y - from.y) * i) / 14);
+        await top.waitForTimeout(25);
+      }
+      await top.mouse.up();
+      let report = null;
+      for (let i = 0; i < 60 && !report; i++) {
+        await top.waitForTimeout(100);
+        report = await worker.evaluate(() => self.__dropReports[0] ?? null);
+      }
+      await top.waitForTimeout(400);
+      const dropped = await readPage();
+      check('the frame is armed', armed);
+      check('the drop: LinkedIn’s change handler gets the resume and selects it', dropped.uploads.join() === OURS.name && dropped.selected === OURS.name, JSON.stringify(dropped));
+      check(
+        'the drop: the card is told it was attached',
+        report?.placed?.length === 1 && report.placed[0].name === OURS.name && report.placed[0].sure !== false && (report.unplaced ?? []).length === 0,
+        JSON.stringify(report),
+      );
+      check('the drop: no complaint from LinkedIn', dropped.complaint === null, String(dropped.complaint));
+
+      // Attach files, as the worker asks a frame for it.
+      await liFrame.goto(liFrame.url(), { waitUntil: 'load' });
+      await ready();
+      const attached = await worker.evaluate(async ([u, files]) => {
+        const [tab] = await chrome.tabs.query({ url: u });
+        const key = `frames:${tab.id}`;
+        const ids = (await (chrome.storage.session ?? chrome.storage.local).get(key))[key] ?? [];
+        for (const frameId of ids) {
+          try {
+            const reply = await chrome.tabs.sendMessage(tab.id, { type: 'jh-frame-attach', payload: { files } }, { frameId });
+            if (reply?.data?.placed?.length || reply?.data?.unplaced?.length) return reply.data;
+          } catch {
+            // A frame that has gone.
+          }
+        }
+        return null;
+      }, [topUrl, [OURS]]);
+      await top.waitForTimeout(400);
+      const pressed = await readPage();
+      check('Attach files: LinkedIn’s change handler gets the resume and selects it', pressed.uploads.join() === OURS.name && pressed.selected === OURS.name, JSON.stringify(pressed));
+      check(
+        'Attach files: reported as attached',
+        attached?.placed?.length === 1 && attached.placed[0].sure !== false && (attached.unplaced ?? []).length === 0,
+        JSON.stringify(attached),
+      );
+
+      // And the person's own press afterwards: the browser's dialog, nothing of ours.
+      const was = choosers;
+      const at = await buttonAt();
+      await top.mouse.click(at.x, at.y);
+      for (let i = 0; i < 30 && choosers === was; i++) await top.waitForTimeout(100);
+      await top.waitForTimeout(400);
+      const after = await readPage();
+      check(
+        'a press of the person’s own afterwards opens the real dialog, and nothing goes in',
+        choosers > was && after.uploads.length === pressed.uploads.length,
+        JSON.stringify({ opened: choosers > was, after }),
+      );
       await top.close();
     }
   } finally {

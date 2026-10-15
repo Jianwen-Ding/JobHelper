@@ -24,6 +24,16 @@
  *  - Optionally a Cover letter section on the same step, built the same way.
  *  - Optionally (`shadow`) the whole modal inside an open shadow root on
  *    `#interop-outlet`, which is how LinkedIn has served it since 2025.
+ *  - Optionally (`closed`) the same, with the shadow root closed, so that
+ *    `host.shadowRoot` is null and only `chrome.dom.openOrClosedShadowRoot`
+ *    reaches inside.
+ *  - Optionally (`picker`) no file input at all, which is what the user's own
+ *    page showed: a console probe of the document and every open shadow root
+ *    found `"inputs": []` with the dialog in `#interop-outlet`'s open root.
+ *    "Upload resume" is a `<button>` whose click handler makes the input then
+ *    and there and calls `click()` on it to open the dialog. `'detached'`
+ *    never attaches it; `'transient'` appends it, clicks it and removes it
+ *    in the same handler. `window.linkedin.made` counts the inputs made.
  *  - Optionally (`guard`) LinkedIn's own drag handling: the page refuses drops
  *    anywhere but its upload control (`dropEffect = 'none'`), and the upload
  *    control reads `dataTransfer.files` itself and complains when the drag
@@ -55,7 +65,7 @@ const card = (kind, { name, when, selected }, i) => `
     </div>
   </div>`;
 
-const section = (kind, title, help, list) => `
+const section = (kind, title, help, list, picker) => `
   <div class="jobs-document-upload-redesign-card__section" data-section="${kind}">
     <h3 class="t-16 t-bold">${title}</h3>
     <p class="t-12 t-black--light">${help}</p>
@@ -64,13 +74,19 @@ const section = (kind, title, help, list) => `
     </div>
     <button type="button" class="artdeco-button artdeco-button--tertiary jobs-document-upload__show-more">Show more ${kind.replace('-', ' ')}s</button>
     <div class="js-jobs-document-upload__container jobs-document-upload__container display-flex">
-      <label for="jobs-document-upload-file-input-upload-${kind}"
+      ${picker
+        ? `<button type="button" data-upload="${kind}"
              class="jobs-document-upload__upload-button artdeco-button artdeco-button--secondary artdeco-button--2"
              aria-label="Upload ${kind.replace('-', ' ')} button. Supported file formats: DOC, DOCX, PDF">
-        <span class="artdeco-button__text" role="button" tabindex="0">Upload ${kind.replace('-', ' ')}</span>
-      </label>
-      <input id="jobs-document-upload-file-input-upload-${kind}" name="file" type="file"
-             accept=".doc,.docx,.pdf" class="hidden" aria-describedby="jobs-document-upload-${kind}-format">
+             <span class="artdeco-button__text">Upload ${kind.replace('-', ' ')}</span>
+           </button>`
+        : `<label for="jobs-document-upload-file-input-upload-${kind}" data-upload="${kind}"
+             class="jobs-document-upload__upload-button artdeco-button artdeco-button--secondary artdeco-button--2"
+             aria-label="Upload ${kind.replace('-', ' ')} button. Supported file formats: DOC, DOCX, PDF">
+             <span class="artdeco-button__text" role="button" tabindex="0">Upload ${kind.replace('-', ' ')}</span>
+           </label>
+           <input id="jobs-document-upload-file-input-upload-${kind}" name="file" type="file"
+             accept=".doc,.docx,.pdf" class="hidden" aria-describedby="jobs-document-upload-${kind}-format">`}
       <p id="jobs-document-upload-${kind}-format" class="t-12 t-black--light">DOC, DOCX, PDF (2 MB)</p>
     </div>
   </div>`;
@@ -113,7 +129,7 @@ const STYLE = `
 `;
 
 /** The modal itself. */
-function modal({ cover, contact }) {
+function modal({ cover, contact, picker }) {
   return `
   <div class="artdeco-modal-overlay artdeco-modal-overlay--layer-default">
     <div class="jobs-easy-apply-modal artdeco-modal artdeco-modal--layer-default" role="dialog" tabindex="-1"
@@ -125,8 +141,8 @@ function modal({ cover, contact }) {
           <div class="pv4"><span class="t-12">50%</span><progress max="100" value="50"></progress></div>
           <form>
             ${contact ? CONTACT : ''}
-            ${section('resume', 'Resume', 'Be sure to include an updated resume', RESUMES)}
-            ${cover ? section('cover-letter', 'Cover letter', 'Upload a cover letter (optional)', [{ name: 'Cover Letter Generic.pdf', when: 'Last used on 5/5/2024' }]) : ''}
+            ${section('resume', 'Resume', 'Be sure to include an updated resume', RESUMES, picker)}
+            ${cover ? section('cover-letter', 'Cover letter', 'Upload a cover letter (optional)', [{ name: 'Cover Letter Generic.pdf', when: 'Last used on 5/5/2024' }], picker) : ''}
           </form>
         </div>
         <footer class="jobs-easy-apply-footer" role="presentation">
@@ -142,35 +158,63 @@ function modal({ cover, contact }) {
  * What LinkedIn does with a file. Runs against `root`, which is the document
  * or the shadow root the modal is in.
  */
-function behave(root, { clears, guard }) {
-  window.linkedin = { uploads: [], refusedDrops: 0, pageDrops: 0 };
+function behave(root, { clears, guard, picker }) {
+  window.linkedin = { uploads: [], refusedDrops: 0, pageDrops: 0, made: 0 };
   const today = 'Uploaded on 10/15/2026';
+  /*
+   * No input until the button is pressed: made, given its `accept` and its
+   * `change` handler, and clicked — never attached (`detached`), or attached
+   * for exactly as long as the click (`transient`).
+   */
+  if (picker) {
+    for (const button of root.querySelectorAll('[data-upload]')) {
+      const kind = button.getAttribute('data-upload');
+      const holder = button.closest('.jobs-document-upload__container');
+      button.addEventListener('click', () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.doc,.docx,.pdf,application/pdf,application/msword';
+        input.addEventListener('change', () => took(input, kind, holder));
+        window.linkedin.made += 1;
+        if (picker === 'transient') {
+          holder.append(input);
+          input.click();
+          input.remove();
+        } else {
+          input.click();
+        }
+      });
+    }
+  }
   for (const input of root.querySelectorAll('input[type=file]')) {
     const kind = input.id.replace('jobs-document-upload-file-input-upload-', '');
     const holder = input.closest('.jobs-document-upload__container');
-    input.addEventListener('change', () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const name = file.name;
-      if (clears) input.value = '';
-      const busy = document.createElement('div');
-      busy.className = 'jobs-document-upload__progress';
-      busy.setAttribute('role', 'progressbar');
-      busy.textContent = 'Uploading…';
-      holder.append(busy);
-      setTimeout(() => {
-        busy.remove();
-        const list = root.querySelector(`[data-list="${kind}"]`);
-        for (const c of list.children) {
-          c.classList.remove('jobs-document-upload-redesign-card__container--selected');
-          c.setAttribute('aria-checked', 'false');
-        }
-        const wrap = document.createElement('div');
-        wrap.innerHTML = card(kind, { name, when: today, selected: true }, list.children.length);
-        list.prepend(wrap.firstElementChild);
-        window.linkedin.uploads.push({ kind, name });
-      }, 250);
-    });
+    input.addEventListener('change', () => took(input, kind, holder));
+  }
+  function took(input, kind, holder) {
+    const file = input.files?.[0];
+    if (!file) return;
+    const name = file.name;
+    if (clears) input.value = '';
+    const busy = document.createElement('div');
+    busy.className = 'jobs-document-upload__progress';
+    busy.setAttribute('role', 'progressbar');
+    busy.textContent = 'Uploading…';
+    holder.append(busy);
+    setTimeout(() => {
+      busy.remove();
+      const list = root.querySelector(`[data-list="${kind}"]`);
+      for (const c of list.children) {
+        c.classList.remove('jobs-document-upload-redesign-card__container--selected');
+        c.setAttribute('aria-checked', 'false');
+      }
+      const wrap = document.createElement('div');
+      wrap.innerHTML = card(kind, { name, when: today, selected: true }, list.children.length);
+      list.prepend(wrap.firstElementChild);
+      window.linkedin.uploads.push({ kind, name });
+    }, 250);
+  }
+  for (const holder of root.querySelectorAll('.jobs-document-upload__container')) {
     if (guard) {
       holder.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -213,14 +257,16 @@ function behave(root, { clears, guard }) {
 export function easyApply(o = {}) {
   const inner = modal(o);
   const helpers = `const card = ${card.toString()};`;
-  const opts = JSON.stringify({ clears: Boolean(o.clears), guard: Boolean(o.guard) });
-  const mount = o.shadow
+  const opts = JSON.stringify({ clears: Boolean(o.clears), guard: Boolean(o.guard), picker: o.picker || null });
+  const mount = o.shadow || o.closed
     ? `<div id="interop-outlet" data-testid="interop-shadowdom"></div>
        <script>
          ${helpers}
          (() => {
            const host = document.getElementById('interop-outlet');
-           const root = host.attachShadow({ mode: 'open' });
+           const root = host.attachShadow({ mode: ${JSON.stringify(o.closed ? 'closed' : 'open')} });
+           // The page's own handle on its root, which a closed root leaves it the only one of.
+           window.__eaRoot = root;
            root.innerHTML = ${JSON.stringify(`<style>${STYLE}</style>${inner}`)};
            (${behave.toString().replace('function behave', 'function')})(root, ${opts});
          })();
@@ -239,7 +285,7 @@ export function easyApply(o = {}) {
     /** Find through the shadow root, when there is one. */
     window.$ea = (sel) => {
       const host = document.getElementById('interop-outlet');
-      return (host?.shadowRoot ?? document).querySelector(sel);
+      return (window.__eaRoot ?? host?.shadowRoot ?? document).querySelector(sel);
     };
   </script>
 </body></html>`;
@@ -247,12 +293,12 @@ export function easyApply(o = {}) {
 
 /** Selectors for the places a chip gets let go of, in either variant. */
 export const AIM = {
-  button: '[for="jobs-document-upload-file-input-upload-resume"] .artdeco-button__text',
+  button: '[data-upload="resume"] .artdeco-button__text',
   card: '[data-list="resume"] .jobs-document-upload-redesign-card__container:nth-child(2) .jobs-document-upload-redesign-card__file-name',
   circle: '[data-list="resume"] .jobs-document-upload-redesign-card__container:nth-child(1) .jobs-document-upload-redesign-card__toggle-label',
   section: '[data-section="resume"]',
   heading: '[data-section="resume"] > h3',
   footer: '.jobs-easy-apply-footer',
   next: '[data-easy-apply-next-button]',
-  coverButton: '[for="jobs-document-upload-file-input-upload-cover-letter"] .artdeco-button__text',
+  coverButton: '[data-upload="cover-letter"] .artdeco-button__text',
 };

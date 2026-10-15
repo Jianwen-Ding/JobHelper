@@ -642,7 +642,15 @@ async function main() {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     if (url === '/linkedin') {
       const o = new URLSearchParams(req.url.split('?')[1] ?? '');
-      res.end(easyApply({ shadow: o.has('shadow'), cover: o.has('cover'), clears: o.has('clears') }));
+      res.end(
+        easyApply({
+          shadow: o.has('shadow'),
+          closed: o.has('closed'),
+          picker: o.get('picker') || undefined,
+          cover: o.has('cover'),
+          clears: o.has('clears'),
+        }),
+      );
       return;
     }
     if (url === '/workday-list') {
@@ -1689,7 +1697,7 @@ async function main() {
           const report = sel ? await m.dropOnto(window.$ea(sel), list) : await m.attachFiles(list);
           // LinkedIn's upload takes a moment before the new card is drawn.
           await new Promise((r) => setTimeout(r, 500));
-          const root = document.getElementById('interop-outlet')?.shadowRoot ?? document;
+          const root = window.__eaRoot ?? document.getElementById('interop-outlet')?.shadowRoot ?? document;
           const inBoxes = {};
           for (const input of root.querySelectorAll('input[type=file]')) {
             inBoxes[input.id.replace('jobs-document-upload-file-input-upload-', '')] = [...(input.files ?? [])].map((f) => f.name);
@@ -1777,6 +1785,117 @@ async function main() {
       );
       check('the transcript is said to have nowhere to go', report.unplaced[0]?.name === TRANSCRIPT, JSON.stringify(report.unplaced));
     }
+
+    /*
+     * LinkedIn Easy Apply as the user's own page has it: no file input in the
+     * document or in the open root the dialog is drawn in, and an "Upload
+     * resume" button whose handler makes one and clicks it. The extension
+     * presses the button and answers the dialog through picker.js — loaded
+     * here into the page, as the manifest loads it into the page's world. And
+     * the step in a closed shadow root, read the way a content script can,
+     * through `chrome.dom.openOrClosedShadowRoot` (stood in for here by a
+     * record of every root the page attaches).
+     *
+     * Each pressed by a real mouse afterwards, as the person would: the
+     * dialog that opens is the browser's own, and nothing of ours goes in.
+     */
+    const pickerPath = path.join(root, 'src/content/picker.js');
+    const q = await browser.newPage();
+    if (fs.existsSync(pickerPath)) await q.addInitScript({ path: pickerPath });
+    await q.addInitScript(() => {
+      const roots = new WeakMap();
+      const attach = Element.prototype.attachShadow;
+      Element.prototype.attachShadow = function (init) {
+        const r = attach.call(this, init);
+        roots.set(this, r);
+        return r;
+      };
+      window.chrome = window.chrome || {};
+      window.chrome.dom = { openOrClosedShadowRoot: (el) => roots.get(el) ?? null };
+    });
+    const onLinkedInToo = async (query, aim, files) => {
+      await q.goto(`${base}/linkedin?${query}`, { waitUntil: 'domcontentloaded' });
+      return q.evaluate(
+        async ({ b, sel, list }) => {
+          const m = await import(`${b}/attach.js`);
+          const report = sel ? await m.dropOnto(window.$ea(sel), list) : await m.attachFiles(list);
+          await new Promise((r) => setTimeout(r, 500));
+          const root = window.__eaRoot ?? document;
+          const selected = root.querySelector('[data-list="resume"] [aria-checked="true"] .jobs-document-upload-redesign-card__file-name')?.textContent ?? null;
+          return { report, uploads: window.linkedin.uploads, made: window.linkedin.made, selected };
+        },
+        { b: base, sel: aim ? AIM[aim] : null, list: files },
+      );
+    };
+    /** A real press of the Upload button afterwards: the browser's own dialog, and nothing of ours. */
+    // Chosen-file dialogs are caught for the whole of this page, so none can open before the catching is on.
+    let choosers = 0;
+    q.on('filechooser', () => {
+      choosers += 1;
+    });
+    const pressedByHand = async () => {
+      const at = await q.evaluate((sel) => {
+        window.$ea(sel).scrollIntoView({ block: 'center' });
+        const r = window.$ea(sel).getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      }, AIM.button);
+      const before = await q.evaluate(() => ({ uploads: window.linkedin.uploads.length, made: window.linkedin.made }));
+      const was = choosers;
+      await q.mouse.click(at.x, at.y);
+      for (let i = 0; i < 30 && choosers === was; i++) await q.waitForTimeout(100);
+      await q.waitForTimeout(400);
+      const after = await q.evaluate(() => ({ uploads: window.linkedin.uploads.length, made: window.linkedin.made }));
+      return { opened: choosers > was, added: after.uploads - before.uploads, made: after.made - before.made };
+    };
+    for (const [variant, query] of [
+      ['in a closed shadow root', 'closed'],
+      ['with no input until Upload is pressed', 'shadow&picker=detached'],
+      ['with an input put in, clicked and taken out', 'shadow&picker=transient'],
+      ['in a closed shadow root, with no input until Upload is pressed', 'closed&picker=detached'],
+    ]) {
+      for (const [aim, words] of [
+        ['button', 'the resume chip let go of on the Upload resume button'],
+        ['card', 'the resume chip let go of on a resume uploaded before'],
+        [null, 'Attach files pressed'],
+      ]) {
+        group(`LinkedIn Easy Apply ${variant}: ${words}`);
+        const { report, uploads, made, selected } = await onLinkedInToo(query, aim, [filed(RESUME)]);
+        check('LinkedIn’s change handler gets the resume, and selects it', uploads.length === 1 && uploads[0]?.name === RESUME && selected === RESUME, JSON.stringify({ uploads, selected }));
+        check(
+          'reported as attached',
+          report.placed.length === 1 && report.placed[0].name === RESUME && report.placed[0].sure !== false && !report.placed[0].already && report.unplaced.length === 0,
+          JSON.stringify(report),
+        );
+        if (/picker/.test(query)) check('with the button pressed once', made === 1, String(made));
+        const byHand = await pressedByHand();
+        check('and a press of the person’s own afterwards opens the real dialog, untouched', byHand.opened && byHand.added === 0, JSON.stringify(byHand));
+      }
+    }
+
+    group('LinkedIn Easy Apply, no input until Upload is pressed: the transcript let go of on Upload resume');
+    {
+      const { report, uploads, made } = await onLinkedInToo('shadow&picker=detached&cover', 'button', [filed(TRANSCRIPT)]);
+      check('nothing is uploaded, and the button is not pressed', uploads.length === 0 && made === 0, JSON.stringify({ uploads, made }));
+      check('and it says whose box that is', report.placed.length === 0 && /for the resume/.test(report.unplaced[0]?.why ?? ''), JSON.stringify(report));
+    }
+
+    group('LinkedIn Easy Apply, no input until Upload is pressed: a file the input does not accept');
+    {
+      const txt = { name: 'Jianwen-Ding-Resume.txt', type: 'text/plain', base64: Buffer.from('plain resume').toString('base64') };
+      const { report, uploads } = await onLinkedInToo('shadow&picker=detached', 'button', [txt]);
+      check('nothing is uploaded', uploads.length === 0, JSON.stringify(uploads));
+      check('and it says what the form takes', /only takes .*pdf/.test(report.unplaced[0]?.why ?? ''), JSON.stringify(report));
+      const byHand = await pressedByHand();
+      check('and the dialog is the person’s again afterwards', byHand.opened && byHand.added === 0, JSON.stringify(byHand));
+    }
+
+    group('LinkedIn Easy Apply, no input until Upload is pressed: Attach files with the resume and a transcript, cover letter step');
+    {
+      const { report, uploads } = await onLinkedInToo('shadow&picker=detached&cover', null, [filed(TRANSCRIPT), filed(RESUME)]);
+      check('only the resume is uploaded, into the resume section', uploads.length === 1 && uploads[0].kind === 'resume' && uploads[0].name === RESUME, JSON.stringify(uploads));
+      check('the transcript is said to have nowhere to go', report.unplaced.length === 1 && report.unplaced[0].name === TRANSCRIPT, JSON.stringify(report));
+    }
+    await q.close();
 
     group('Reading a name for what kind of document it is');
     {

@@ -1202,6 +1202,36 @@
     return Boolean(types && [...types].includes('Files'));
   }
 
+  /*
+   * What the pointer was really over, when that is inside a closed shadow
+   * root.
+   *
+   * `composedPath()` leaves out every node in a closed tree, so a drop on a
+   * button drawn in one reaches this listener as a drop on the host — the
+   * whole component — and `dropOnto` read it as a drop on nothing in
+   * particular. A content script can open the root
+   * (`chrome.dom.openOrClosedShadowRoot`) and ask it what is under the point,
+   * a root at a time. Never into the card's own root; a drop there has been
+   * turned away above already. An open root's insides are in the path
+   * already and come back unchanged.
+   */
+  function intoClosedRoots(target, x, y) {
+    let at = target;
+    for (let depth = 0; at && depth < 16; depth++) {
+      if (at.id === 'jobhelper-card-host' || at.shadowRoot) break;
+      let root = null;
+      try {
+        root = chrome.dom?.openOrClosedShadowRoot?.(at) ?? null;
+      } catch {
+        root = null;
+      }
+      const inner = root?.elementFromPoint?.(x, y);
+      if (!inner || inner === at) break;
+      at = inner;
+    }
+    return at;
+  }
+
   function watchForDrops() {
     if (watchingDrops) return;
     watchingDrops = true;
@@ -1280,6 +1310,7 @@
         event.preventDefault();
         event.stopPropagation();
         inTheAir = null;
+        const under = intoClosedRoots(target, event.clientX, event.clientY);
         /*
          * Said wherever the card is, which is not always here.
          *
@@ -1293,7 +1324,7 @@
         };
         imports
           .attach()
-          .then(({ dropOnto }) => dropOnto(target, files))
+          .then(({ dropOnto }) => dropOnto(under, files))
           .then(said)
           .catch(() =>
             said({

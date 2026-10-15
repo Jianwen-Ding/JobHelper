@@ -1237,12 +1237,31 @@ const ours = (event) => {
   return event;
 };
 
+/*
+ * An element's shadow root, a closed one too where the browser will say —
+ * `chrome.dom.openOrClosedShadowRoot`, which content scripts have had since
+ * Chrome 88 — and never the card's. Only the walks that decide whether this
+ * is an application form and where its fields are use it: `allRoots` and
+ * `fieldsIn`. A closed root was a form with nothing in it, so the guard in
+ * front of Attach files and of a frame's drop said "not an application" about
+ * a step drawn entirely inside one. See `shadowOf` in attach.js.
+ */
+function shadowOf(element) {
+  if (element.id === OURS) return null;
+  if (element.shadowRoot) return element.shadowRoot;
+  try {
+    return globalThis.chrome?.dom?.openOrClosedShadowRoot?.(element) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function allRoots(root = document, out = [root]) {
   for (const element of root.querySelectorAll('*')) {
-    if (element.id === OURS) continue;
-    if (element.shadowRoot) {
-      out.push(element.shadowRoot);
-      allRoots(element.shadowRoot, out);
+    const inside = shadowOf(element);
+    if (inside) {
+      out.push(inside);
+      allRoots(inside, out);
     }
   }
   return out;
@@ -1555,8 +1574,9 @@ function fieldsIn(scope, selector, enough) {
   let n = (scope.matches?.(selector) ? 1 : 0) + scope.querySelectorAll(selector).length;
   if (n >= enough) return n;
   for (const el of [scope, ...scope.querySelectorAll('*')]) {
-    if (!el.shadowRoot || el.id === OURS) continue;
-    n += fieldsIn(el.shadowRoot, selector, enough - n);
+    const inside = shadowOf(el);
+    if (!inside) continue;
+    n += fieldsIn(inside, selector, enough - n);
     if (n >= enough) break;
   }
   return n;

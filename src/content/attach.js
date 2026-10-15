@@ -37,10 +37,43 @@ function allRoots(root = document) {
   const roots = [root];
   for (const where of roots) {
     for (const el of where.querySelectorAll('*')) {
-      if (el.shadowRoot) roots.push(el.shadowRoot);
+      const inside = shadowOf(el);
+      if (inside) roots.push(inside);
     }
   }
   return roots;
+}
+
+/** The card's host. Its root is closed for a reason; see `shadowOf`. */
+const OURS = 'jobhelper-card-host';
+
+/**
+ * An element's shadow root, closed ones included — never the card's.
+ *
+ * `el.shadowRoot` is null for a root attached with `mode: 'closed'`, so a
+ * form drawn inside one was a page with no upload box and no drop area, the
+ * same "nowhere to go" as a page with no form. A content script can ask
+ * `chrome.dom.openOrClosedShadowRoot`, which answers for both (Chrome 88 and
+ * later). Defensive: the LinkedIn step this was written beside turned out to
+ * be in an *open* root (see picker.js), but a closed one costs nothing to
+ * read and is what a component library reaches for when it wants to be left
+ * alone.
+ *
+ * Never the card's own root, which is closed so the page cannot read the
+ * resume and the letter out of it. Read from here, the card's inputs would
+ * be the page's boxes and its chips the page's drop areas.
+ *
+ * Where `chrome.dom` is not there — the module loaded into a bare page by a
+ * test — this is `el.shadowRoot`, as it always was.
+ */
+function shadowOf(el) {
+  if (el.id === OURS) return null;
+  if (el.shadowRoot) return el.shadowRoot;
+  try {
+    return globalThis.chrome?.dom?.openOrClosedShadowRoot?.(el) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 const deepAll = (selector, root = document) =>
@@ -890,6 +923,231 @@ function zoneSays(zone, zones) {
 }
 
 /**
+ * An upload button with no box behind it until it is pressed.
+ *
+ * LinkedIn's Easy Apply resume step: an "Upload resume" button, a list of
+ * earlier resumes, and no `<input type=file>` anywhere — the button's handler
+ * makes one when it is pressed and clicks it to open the dialog. Measured on
+ * the user's own page: no file input in the document or in the open shadow
+ * root the dialog is drawn in. So `uploadBoxes` found nothing, a chip let go
+ * of on that button said "there is no upload box where you dropped it", and
+ * Attach files said "this page has no upload box the extension can reach",
+ * about the one control on the step that exists to take a resume.
+ *
+ * What can be done is to press the button and answer the dialog it opens
+ * with the file — which needs the page's world, where the input is made and
+ * clicked; see picker.js. This finds the buttons worth pressing.
+ *
+ * Narrow on purpose, because pressing a page's button is an act and not a
+ * look: a control that says it uploads or attaches, out loud or in its
+ * accessible name, that somebody can see, that is not a label for some other
+ * control or the button that moves the form along, and that has no file input
+ * of its own nearby — where there is one, `uploadBoxes` has it, and the box
+ * is answered for by the box. "Download resume" is not "upload".
+ */
+const TRIGGER_WORDS = /\b(upload|attach|browse|(choose|select|add) (a )?files?)\b/;
+
+/** Whether a real file input sits in this control's own corner of the page. */
+function besideABox(trigger) {
+  for (let holder = trigger, up = 0; holder && up < 4; holder = holder.parentElement, up++) {
+    if (holder.matches?.('form, body, html, dialog, [role="dialog"]')) return false;
+    if (holder.querySelector?.('input[type="file"]')) return true;
+  }
+  return false;
+}
+
+/** What a trigger says about itself: its accessible name, and its text. */
+const triggerOwnWords = (el) =>
+  wordsOf(`${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('title') ?? ''} ${textOf(el)}`)
+    .replace(/\s+/g, ' ')
+    .trim();
+
+function uploadTriggers(root = document) {
+  const found = deepAll('button, [role="button"], label, a[href], input[type="button"]', root).filter((el) => {
+    if (!el.isConnected || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+    if (el.closest('[hidden]') || putAwayByThePage(el) || el.getClientRects().length === 0) return false;
+    // A label for a control is that control; one for a file input is a box's.
+    if (el instanceof HTMLLabelElement && el.control) return false;
+    if (movesOn(el)) return false;
+    const said = triggerOwnWords(el);
+    if (!said || said.length > 120 || !TRIGGER_WORDS.test(said)) return false;
+    return !besideABox(el);
+  });
+  // Innermost first, as with drop areas: a click on it reaches every handler above.
+  return found.filter((el) => !found.some((other) => other !== el && el.contains(other)));
+}
+
+/**
+ * What a trigger is for: its own words when they name a document, and
+ * otherwise the heading over it — bounded as `zoneSays` bounds a drop area,
+ * except that a list of earlier documents to choose between is part of the
+ * widget, not a field that walls it off (see `optionOf`).
+ */
+function triggerSays(trigger, triggers) {
+  const own = triggerOwnWords(trigger);
+  if (kindOf(own) !== 'other') return own;
+  const clean = (text) => wordsOf(text).replace(/\s+/g, ' ').trim();
+  let said = own;
+  for (let holder = trigger.parentElement, up = 0; holder && up < 4; holder = holder.parentElement, up++) {
+    if (triggers.some((t) => t !== trigger && holder.contains(t))) break;
+    if (holder.matches?.('form, body, html, dialog, [role="dialog"]')) break;
+    if (holdsAField(holder) || holder.querySelector('input[type="file"]')) break;
+    const text = clean(textOf(holder));
+    if (text && text.length < 400) said = text;
+  }
+  return said;
+}
+
+/**
+ * The upload widget around a trigger, for reading what the page draws once
+ * it has the file: the trigger's section, and the list of earlier documents
+ * beside it, where LinkedIn draws a new upload. Bounded as `widgetOf` is.
+ */
+function triggerWidget(trigger, triggers) {
+  let widget = null;
+  for (let holder = trigger.parentElement, up = 0; holder && up < 6; holder = holder.parentElement, up++) {
+    if (holder.matches?.('form, body, html, dialog, [role="dialog"]')) break;
+    if (triggers.some((t) => t !== trigger && holder.contains(t))) break;
+    if (holder.querySelector('input[type="file"]')) break;
+    if (holdsAField(holder)) break;
+    widget = holder;
+  }
+  return widget;
+}
+
+/**
+ * Press a trigger and answer the dialog it opens, through picker.js.
+ *
+ * `decide` is asked what the page's input says it takes — its `accept` and
+ * `multiple` — once the page has made it, and answers with the files to hand
+ * over or with a reason not to. Every rule about what goes where stays here,
+ * in this world; picker.js only carries.
+ *
+ * Resolves to one of:
+ *   { absent: true }                 picker.js is not on this page
+ *   { asked: false }                 pressed, and no dialog was asked for
+ *   { asked: true, declined: why }   asked, and refused here
+ *   { asked: true, count, names }    handed over; `count` is what the input holds
+ *
+ * Each wait is bounded. The arm in picker.js expires on its own after two
+ * seconds and after one use, and is taken back here as soon as the press
+ * has had its chance, so a click of the person's own afterwards opens their
+ * real dialog.
+ */
+const PICKER = 'jobhelper-picker';
+const ARMED_WAIT_MS = 400;
+const ASKED_WAIT_MS = 1200;
+const DELIVERED_WAIT_MS = 3000;
+
+async function throughThePicker(trigger, decide) {
+  const nonce =
+    globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const heard = [];
+  let wake = null;
+  const listen = (event) => {
+    if (event.source !== window) return;
+    const m = event.data;
+    if (!m || m[PICKER] !== true || m.nonce !== nonce) return;
+    heard.push(m);
+    wake?.();
+  };
+  const said = (type) => heard.find((m) => m.type === type) ?? null;
+  const until = async (type, ms) => {
+    const end = Date.now() + ms;
+    while (!said(type) && Date.now() < end) {
+      await new Promise((r) => {
+        wake = r;
+        setTimeout(r, Math.min(50, Math.max(0, end - Date.now())));
+      });
+    }
+    wake = null;
+    return said(type);
+  };
+  const tell = (what) => window.postMessage({ [PICKER]: true, nonce, ...what }, '*');
+  window.addEventListener('message', listen);
+  try {
+    tell({ type: 'arm' });
+    if (!(await until('armed', ARMED_WAIT_MS))) return { absent: true };
+    trigger.click();
+    const asked = await until('asked', ASKED_WAIT_MS);
+    if (!asked) {
+      tell({ type: 'disarm' });
+      return { asked: false };
+    }
+    const answer = decide({ accept: String(asked.accept ?? ''), multiple: Boolean(asked.multiple) });
+    if (!Array.isArray(answer)) {
+      tell({ type: 'decline' });
+      return { asked: true, declined: answer || 'declined' };
+    }
+    tell({ type: 'deliver', files: answer });
+    const delivered = await until('delivered', DELIVERED_WAIT_MS);
+    return {
+      asked: true,
+      multiple: Boolean(asked.multiple),
+      count: Number(delivered?.count ?? 0),
+      names: Array.isArray(delivered?.names) ? delivered.names : [],
+    };
+  } finally {
+    window.removeEventListener('message', listen);
+  }
+}
+
+/*
+ * Said when a button was pressed and no dialog the extension could answer
+ * came of it: picker.js missing from the page (it is injected at load, so a
+ * tab open since before the extension was), or a page that opens its dialog
+ * some other way — `dispatchEvent` of a click at the input, say, which is not
+ * a call this can see.
+ */
+const UNANSWERED = 'pressing its upload button did not open a file box the extension could answer';
+
+/** `willTake`, for an input known only by what picker.js read off it. */
+const takesAccept = (accept, file) => willTake({ getAttribute: (n) => (n === 'accept' ? accept : null) }, file);
+
+/**
+ * One file, through one trigger, with the same questions a box is asked.
+ *
+ * `placed` only when picker.js says the page's input now holds the file and
+ * the page has had `change` — and then, as `putIn` does, once the widget has
+ * had its say: a name drawn new in the widget is kept, the name inside an
+ * error is a refusal, and nothing visible at all is `sure: false`, said on
+ * the card as a drop area's "check the form".
+ */
+async function pressToAttach(trigger, triggers, file) {
+  const widget = triggerWidget(trigger, triggers);
+  const grew = widget ? { widget, before: timesNamed(textOf(widget), file.name) } : null;
+  const r = await throughThePicker(trigger, ({ accept }) =>
+    takesAccept(accept, file) ? [file] : `this form only takes ${accept} there`,
+  );
+  if (r.absent || !r.asked) return { unanswered: true };
+  if (r.declined) return { refused: r.declined };
+  if (r.count < 1 || !r.names.includes(file.name)) return { refused: 'the page would not let that box take a file' };
+  const shown = grew ? await drawnNew(grew, file.name) : 'nothing';
+  if (shown === 'refused') return { refused: 'this form took it and then would not keep it' };
+  return { placed: true, sure: shown === 'kept', multiple: r.multiple };
+}
+
+/*
+ * What the widget does with a file handed to it this way: a new mention of
+ * the name is kept, the name inside an error a refusal — waited for as
+ * `shownIn` waits, a moment for any widget and longer while an upload is
+ * visibly running. Counted against what was there before the press, because
+ * LinkedIn's list routinely already shows a resume of the same name from an
+ * earlier application.
+ */
+async function drawnNew(grew, name) {
+  const began = Date.now();
+  for (;;) {
+    if (!grew.widget.isConnected) return 'gone';
+    if (readShown(grew.widget, name) === 'refused') return 'refused';
+    if (timesNamed(textOf(grew.widget), name) > grew.before) return 'kept';
+    const busy = Boolean(grew.widget.querySelector(UPLOADING));
+    if (Date.now() - began >= (busy ? UPLOAD_WAIT_MS : SHOWN_GRACE_MS)) return busy ? 'uploading' : 'nothing';
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+/**
  * Attach what the card has to whatever this page asks for.
  *
  * Reports rather than throws, and reports per file: a form with a resume box
@@ -957,6 +1215,13 @@ export async function attachFiles(files) {
    * answered for by the first try, not by a second.
    */
   let tried = new Set();
+  /*
+   * The upload buttons with nothing behind them, found the first time one is
+   * wanted, and the ones already pressed this run. See `uploadTriggers`.
+   */
+  let triggers = null;
+  const pressed = new Set();
+  let unanswered = false;
   const placeIn = async (box, file) => {
     tried.add(box);
     const ok = await putIn(box, file, { alongside: written.has(box), ours });
@@ -993,6 +1258,7 @@ export async function attachFiles(files) {
 
     const kind = kindOf(spec.name);
     tried = new Set();
+    unanswered = false;
     /*
      * Already there: a box that would take this file is showing it. Said so,
      * and left alone — a second copy is not what a second press means. Only
@@ -1097,6 +1363,46 @@ export async function attachFiles(files) {
     }
 
     /*
+     * An upload button with no box behind it until it is pressed, when it
+     * says it is for this kind of document: LinkedIn's "Upload resume". See
+     * `uploadTriggers`. Before the drop areas, because this one can be read
+     * back — picker.js says whether the page's input took the file — and a
+     * drop never can.
+     *
+     * Only a button that names this kind, in its own words or the heading
+     * over it. Pressing a page's button is an act, and "Upload" over a
+     * profile photo is not where a resume goes; a file of no known kind is
+     * left to the routes above. Not after a box has refused this file: that
+     * box has had its say. And each button once per press, unless the input
+     * it opened said it takes several.
+     */
+    if (!rejectedBy && WANTS[kind]) {
+      triggers ??= uploadTriggers();
+      const offered = triggers.filter(
+        (t) => !pressed.has(t) && WANTS[kind].test(triggerSays(t, triggers)) && !NOT_A_DOCUMENT.test(triggerOwnWords(t)),
+      );
+      const only = offered.filter((t) => {
+        const text = triggerSays(t, triggers);
+        return !Object.entries(WANTS).some(([k, p]) => k !== kind && p.test(text));
+      });
+      const trigger = only[0] ?? offered[0];
+      if (trigger) {
+        const r = await pressToAttach(trigger, triggers, file);
+        if (r.placed) {
+          if (!r.multiple) pressed.add(trigger);
+          placed.push({ name: spec.name, where: triggerSays(trigger, triggers).slice(0, 60), ...(r.sure ? {} : { sure: false }) });
+          continue;
+        }
+        pressed.add(trigger);
+        if (r.refused) {
+          unplaced.push({ name: spec.name, why: r.refused });
+          continue;
+        }
+        unanswered = true;
+      }
+    }
+
+    /*
      * The drop area, when there is no box for this file anywhere.
      *
      * Not only when the page has no box at all, which was the old test: a
@@ -1167,9 +1473,11 @@ export async function attachFiles(files) {
         ? 'this form took it and then would not keep it'
         : refusedType
           ? `this form only takes ${refusedType.getAttribute('accept')} there`
-          : boxes.length === 0 && zones.length === 0
-            ? 'this page has no upload box the extension can reach'
-            : 'no box here asks for it',
+          : unanswered
+            ? UNANSWERED
+            : boxes.length === 0 && zones.length === 0
+              ? 'this page has no upload box the extension can reach'
+              : 'no box here asks for it',
     });
   }
 
@@ -1276,6 +1584,37 @@ export async function dropOnto(target, files) {
   const zones = dropZones();
   const box = target ? near(target) : null;
   /*
+   * And, with no box there, an upload button with nothing behind it until it
+   * is pressed — LinkedIn's "Upload resume", which is exactly where somebody
+   * lets go of a resume. Found the way `near` finds a box: the button under
+   * the pointer, or the one button in the upload widget the pointer is in,
+   * stopping where `near` stops. See `uploadTriggers`.
+   */
+  const triggers = box || !target ? [] : uploadTriggers();
+  const nearTrigger = (el) => {
+    if (aField(el?.closest?.(OTHER_FIELD))) return null;
+    for (let at = el; at; at = at.parentElement ?? at.getRootNode?.()?.host) {
+      if (triggers.includes(at)) return at;
+      if (at.matches?.('form, body, html, dialog, [role="dialog"], [aria-modal="true"]')) return null;
+      if (at.querySelector?.('form')) return null;
+      if ([...(at.querySelectorAll?.('button, [role="button"], input[type="submit"]') ?? [])].some(movesOn)) return null;
+      if ([...(at.querySelectorAll?.(OTHER_FIELD) ?? [])].some(aField)) return null;
+      if (at.querySelector?.('input[type="file"]')) return null;
+      const inside = triggers.filter((t) => at !== t && at.contains?.(t));
+      if (inside.length > 1) return null;
+      if (inside.length === 1) return inside[0];
+      if (zones.includes(at)) return null;
+    }
+    return null;
+  };
+  const trigger = triggers.length > 0 ? nearTrigger(target) : null;
+  const triggerKinds = trigger
+    ? Object.entries(WANTS).filter(([, p]) => p.test(triggerSays(trigger, triggers))).map(([k]) => k)
+    : [];
+  const triggerKind = triggerKinds.length === 1 ? triggerKinds[0] : null;
+  let triggerTook = false;
+  let triggerSilent = false;
+  /*
    * A drop area, when that is what the pointer was over — one the page has
    * marked as taking drops. Not just the nearest `<div>`: on a text field, or
    * a paragraph of the form, there is nothing to drop on and saying "placed,
@@ -1288,7 +1627,7 @@ export async function dropOnto(target, files) {
    * box" is the failure this file exists to prevent, however it was aimed.
    */
   const boxKinds = box ? Object.entries(WANTS).filter(([, p]) => p.test(saysWhat(box))).map(([k]) => k) : [];
-  const boxKind = boxKinds.length === 1 ? boxKinds[0] : null;
+  const boxKind = boxKinds.length === 1 ? boxKinds[0] : triggerKind;
   const KIND_WORDS = { resume: 'resume', letter: 'cover letter', transcript: 'transcript', portfolio: 'portfolio' };
   /*
    * The file the box asks for first, then the rest by `WANTS` order — so the
@@ -1340,6 +1679,39 @@ export async function dropOnto(target, files) {
       continue;
     }
 
+    /*
+     * The button with nothing behind it. Asked the box's questions — the
+     * kind it is for, and once picker.js has the page's input, what that
+     * input accepts — and then pressed. A button that opened no dialog this
+     * could answer is said as that, or left to the drop area under it.
+     */
+    if (trigger && !triggerSilent) {
+      const kind = kindOf(spec.name);
+      if (triggerKind && kind !== 'other' && kind !== triggerKind) {
+        unplaced.push({ name: spec.name, why: `that box is for the ${KIND_WORDS[triggerKind]}` });
+        continue;
+      }
+      if (NOT_A_DOCUMENT.test(triggerOwnWords(trigger)) && kind !== 'other') {
+        unplaced.push({ name: spec.name, why: 'that box is not for documents' });
+        continue;
+      }
+      if (triggerTook) {
+        unplaced.push({ name: spec.name, why: 'this box takes one file' });
+        continue;
+      }
+      const r = await pressToAttach(trigger, triggers, file);
+      if (r.placed) {
+        if (!r.multiple) triggerTook = true;
+        placed.push({ name: spec.name, where: triggerSays(trigger, triggers).slice(0, 60) || 'the box you dropped it on', ...(r.sure ? {} : { sure: false }) });
+        continue;
+      }
+      if (r.refused) {
+        unplaced.push({ name: spec.name, why: r.refused });
+        continue;
+      }
+      triggerSilent = true;
+    }
+
     if (zone) {
       // A zone gives nothing back to read, so the answer is "not sure" and is
       // reported as such rather than claimed. See `dropOn`.
@@ -1348,7 +1720,7 @@ export async function dropOnto(target, files) {
       continue;
     }
 
-    unplaced.push({ name: spec.name, why: 'there is no upload box where you dropped it' });
+    unplaced.push({ name: spec.name, why: triggerSilent ? UNANSWERED : 'there is no upload box where you dropped it' });
   }
 
   return { placed, unplaced, boxes: boxes.length };
