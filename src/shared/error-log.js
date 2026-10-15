@@ -54,6 +54,31 @@ export const MAX_DESCRIPTION = 4000;
 export const SCRUB_HINT = 'Contact details and tokens are taken out of the automatic logs; tokens are also taken out of your description.';
 /** Set by the keyboard command, read by the popup: open on the form. */
 export const OPEN_FORM_KEY = 'jh-open-error-log';
+/**
+ * Set beside it when the card's "Log an error" opened the form: a short draft
+ * description saying where it came from, `{ text, at }`. Read and cleared by
+ * the popup, which starts an empty description box with it.
+ */
+export const OPEN_FORM_DRAFT_KEY = 'jh-open-error-log-draft';
+/** The longest draft the card may hand the form. */
+export const CARD_DRAFT_MAX = 300;
+
+/**
+ * A draft from the card, as the worker keeps it: a string, one line, no
+ * control characters, at most `CARD_DRAFT_MAX` characters. It comes from a
+ * content script — which a page cannot write to, but which runs over pages
+ * that are not ours — so it is held to being a few words and nothing more.
+ * Anything that is not a string is no draft at all.
+ */
+export function cardDraft(text) {
+  if (typeof text !== 'string') return '';
+  // Control characters (newlines, NULs, escapes, bidi overrides) as spaces, then runs of spaces as one.
+  const line = text
+    .replace(/[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return line.length > CARD_DRAFT_MAX ? `${line.slice(0, CARD_DRAFT_MAX - 1).trimEnd()}…` : line;
+}
 
 /** A window as asked for: 1 to 30 whole minutes, the default for anything else. */
 export function windowMinutes(asked) {

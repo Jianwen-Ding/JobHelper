@@ -1653,6 +1653,22 @@
       case 'openPanel':
         return send('openPanel', {});
 
+      /*
+       * "Log an error" in the card's "Fill in and file" step: the lines that
+       * step was showing, into the worker's automatic logs, and the popup's
+       * error-log form opened with a short draft. Only these — the card's own
+       * sentences and the page's host — never anything from the form. Sent
+       * straight away, like `openPanel`: the popup opens in answer to a press.
+       */
+      case 'logError': {
+        const lines = (Array.isArray(payload.lines) ? payload.lines : [])
+          .filter((line) => typeof line === 'string' && line.trim())
+          .slice(0, 5)
+          .map((message) => ({ kind: 'card-step', level: 'info', message: message.slice(0, 1000) }));
+        if (lines.length) send('logEvents', { events: lines }).catch(() => undefined);
+        return send('openErrorLogFromCard', { draft: typeof payload.draft === 'string' ? payload.draft.slice(0, 300) : '' });
+      }
+
       /** Which resume the card is working with, for the side panel to show. */
       case 'panelTarget':
         return send('panelTarget', payload);

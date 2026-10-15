@@ -8355,6 +8355,193 @@ async function main() {
     check('and Enter again leaves it on "and N more"', /^BUTTON\.link and \d+ more$/.test(closed ?? ''), closed);
   }
 
+  console.log('\n"Log an error" in step 4, Fill in and file');
+  {
+    /*
+     * The error log was behind the toolbar button and Alt+Shift+E only. Step
+     * 4 is where Autofill and Attach go wrong in front of somebody, so the
+     * way in is there: at the foot of the folder box, or of the step before
+     * there is a box. Pressing it sends `logError` with a short draft — the
+     * step, the page's host, the step's own report lines — and those lines.
+     */
+    const logPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await logPage.route('https://boards.example.com/**', (route) =>
+      route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Apply</title><body><form><input name="email"></form></body>' }),
+    );
+    await logPage.goto('https://boards.example.com/acme/apply');
+    const inLogPage = (fn, given) =>
+      logPage.evaluate(
+        async ([code, body, arg]) => {
+          globalThis.__JOBHELPER_HARNESS__ = true;
+          const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+          const { createCard, removeCard } = await import(url);
+          removeCard();
+          // eslint-disable-next-line no-new-func
+          return new Function('createCard', 'given', `return (${body})(createCard, given)`)(createCard, arg);
+        },
+        [source, fn.toString(), given ?? null],
+      );
+    // A card on step 4 with a report showing; `given.box` gives it the folder box.
+    const setUp = async (createCard, given) => {
+      window.logged = [];
+      const handle = createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Data Engineer', company: 'Streamly' },
+          spec: { id: 'j', label: 'Streamly', tier: 'temporary' },
+          baseLabel: 'Base',
+          tailor: 'match',
+          diff: [],
+          rationale: [],
+          ...(given.box ? { currentDir: '/Users/someone/resume/out/current', application: { id: 'app-1' } } : {}),
+        },
+        resumes: [{ id: 'b', label: 'Base', base: true }],
+        settings: {},
+        questions: [],
+        needsCoverLetter: true,
+        isForm: true,
+        onAction: async (a, payload) => {
+          if (a === 'logError') {
+            window.logged.push(payload);
+            if (given.refuse) throw new Error('refused');
+            return { opened: 'popup' };
+          }
+          if (a === 'autofill')
+            return {
+              // Values the person's profile put in the form: never in the draft.
+              filled: Array.from({ length: 9 }, (_, i) => ({
+                key: `k${i}`,
+                label: `F${i}`,
+                value: i === 0 ? 'morgan@example.com' : `value ${i}`,
+                // A long report: answers from before, named by their (long) questions.
+                ...(given.long ? { remembered: true, question: `Please describe, in your own words, the reason number ${i} you would like to work here` } : {}),
+              })),
+              skipped: [{ key: 'p', label: 'Pronouns', fieldId: 'f1', reason: 'not one of the options' }],
+            };
+          if (a === 'attachmentFiles') return { files: [{ name: 'Someone-Resume.pdf' }, { name: 'Someone-Transcript.pdf' }] };
+          if (a === 'wantedDocuments') return { kinds: ['resume', 'letter'] };
+          if (a === 'aiStatus') return { state: 'off' };
+          return {};
+        },
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      const wait = async (test) => {
+        for (let i = 0; i < 200 && !test(); i++) await new Promise((r) => setTimeout(r, 25));
+      };
+      await new Promise((r) => setTimeout(r, 100));
+      [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+      await wait(() => root.querySelector('.ok-note'));
+      if (given.box) await wait(() => root.querySelectorAll('.staged .file').length >= 2);
+      window.cardHandle = handle;
+      return true;
+    };
+    const where = () => {
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      const buttons = [...root.querySelectorAll('button.log-error')];
+      const button = buttons[0];
+      const step = button?.closest('.step');
+      const box = button?.closest('.staged');
+      return {
+        count: buttons.length,
+        name: button?.textContent.replace('!', '').trim() ?? null,
+        mark: button?.querySelector('.log-error-mark')?.getAttribute('aria-hidden') ?? null,
+        inStep4: Boolean(step && /Fill in and file/.test(step.textContent)),
+        inBox: Boolean(box),
+        lastInBox: Boolean(box && box.lastElementChild?.contains(button)),
+        afterChips: Boolean(box && box.querySelector('.files') && box.querySelector('.files').compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING),
+        overlapsChips: [...(box?.querySelectorAll('.files > *') ?? [])].some((c) => {
+          const a = c.getBoundingClientRect();
+          const b = button.getBoundingClientRect();
+          return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+        }),
+      };
+    };
+
+    await inLogPage(setUp, { box: true });
+    const boxed = await logPage.evaluate(where);
+    check('step 4 has one "Log an error", inside its folder box', boxed.count === 1 && boxed.inStep4 && boxed.inBox, JSON.stringify(boxed));
+    check('at the foot of the box, under the file chips and clear of them', boxed.lastInBox && boxed.afterChips && !boxed.overlapsChips, JSON.stringify(boxed));
+    check('named "Log an error", its "!" mark hidden from screen readers', boxed.name === 'Log an error' && boxed.mark === 'true', JSON.stringify(boxed));
+
+    // A redraw, of the kind that lands at any moment: still there, still one, still in the box.
+    await logPage.evaluate(() => window.cardHandle.setQuestions([{ question: 'Why us?', answer: '', confident: false }]));
+    const redrawn = await logPage.evaluate(where);
+    check('it survives a redraw, still once and still in the box', redrawn.count === 1 && redrawn.inBox && redrawn.lastInBox, JSON.stringify(redrawn));
+
+    // Reached from the keyboard: Tab from "Open the folder" gets there, with a ring.
+    await logPage.evaluate(() => {
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      [...root.querySelectorAll('button')].find((b) => b.textContent === 'Open the folder').focus();
+    });
+    let reached = null;
+    for (let i = 0; i < 40 && !reached; i++) {
+      await logPage.keyboard.press('Tab');
+      reached = await logPage.evaluate(() => {
+        const a = document.querySelector('#jobhelper-card-host').shadowRoot.activeElement;
+        if (!a?.classList.contains('log-error')) return null;
+        const cs = getComputedStyle(a);
+        return { style: cs.outlineStyle, width: parseFloat(cs.outlineWidth) };
+      });
+    }
+    check('Tab reaches it', Boolean(reached), JSON.stringify(reached));
+    check('with a visible focus ring', reached?.style === 'solid' && reached?.width >= 2, JSON.stringify(reached));
+    await logPage.keyboard.press('Enter');
+    await logPage.waitForTimeout(200);
+    const sent = (await logPage.evaluate(() => window.logged)) ?? [];
+    const [first] = sent;
+    const line = 'Filled 9 fields, 1 field still for you to answer.';
+    check('Enter on it sends "logError" once', sent.length === 1, JSON.stringify(sent));
+    check(
+      'with a draft naming the step, the page’s host and the step’s report',
+      first?.draft === `From the card — Fill in and file on boards.example.com: ${line}`,
+      first?.draft,
+    );
+    check('and the report lines themselves, for the automatic logs', JSON.stringify(first?.lines) === JSON.stringify([line]), JSON.stringify(first?.lines));
+    check('never a value from the form', !/morgan@example\.com|value \d/.test(JSON.stringify(first)), JSON.stringify(first));
+    // Pressed again at once: the form is already opening.
+    await logPage.evaluate(() => document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('button.log-error').click());
+    await logPage.waitForTimeout(100);
+    check('a second press straight after sends nothing more', (await logPage.evaluate(() => window.logged.length)) === 1);
+    const kept = await logPage.evaluate(() => document.querySelector('#jobhelper-card-host').shadowRoot.activeElement?.classList.contains('log-error'));
+    check('and focus stays on it through the press', kept === true);
+
+    // Before there is a folder: in step 4 all the same, at its foot.
+    await inLogPage(setUp, { box: false, long: true });
+    const bare = await logPage.evaluate(() => {
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      const button = root.querySelector('button.log-error');
+      const step = button?.closest('.step');
+      return {
+        count: root.querySelectorAll('button.log-error').length,
+        inStep4: Boolean(step && /Fill in and file/.test(step.textContent)),
+        last: Boolean(step && step.lastElementChild?.contains(button)),
+        box: Boolean(root.querySelector('.staged')),
+      };
+    });
+    check('with no folder box yet, it is at the foot of step 4', bare.count === 1 && bare.inStep4 && bare.last && !bare.box, JSON.stringify(bare));
+
+    // A long report: the draft stays short.
+    await logPage.evaluate(() => {
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      root.querySelector('button.log-error').click();
+    });
+    await logPage.waitForTimeout(100);
+    const plain = await logPage.evaluate(() => window.logged[0]?.draft);
+    check(
+      'a long report makes a draft of at most 300 characters, ending in “…”',
+      typeof plain === 'string' && plain.length <= 300 && plain.endsWith('…') && plain.startsWith('From the card — Fill in and file on boards.example.com: Filled 9 fields'),
+      `${plain?.length}: ${plain}`,
+    );
+
+    // Refused (the worker would not open it): said beside it, in a sentence with a way round.
+    await inLogPage(setUp, { box: true, refuse: true });
+    await logPage.evaluate(() => document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('button.log-error').click());
+    await logPage.waitForTimeout(200);
+    const said = await logPage.evaluate(() => document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('.log-error-row .said')?.textContent);
+    check('when the form will not open, the card says how else to get to it', /toolbar button, or Alt\+Shift\+E/.test(said ?? ''), said);
+    await logPage.close();
+  }
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

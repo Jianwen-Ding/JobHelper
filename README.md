@@ -191,6 +191,11 @@ in a line or two, paste a screenshot (Ctrl+V), drop one, choose one, or press
 **Capture this tab**, choose how far back the automatic logs go (2, 10 or 30
 minutes), and **Save to error log**.
 
+On the card, **Log an error** at the foot of step 4 (*Fill in and file*) opens
+the same form with a first line already written — the step, the page's host,
+and what Autofill and Attach last reported there — and puts those report lines
+in the entry's automatic logs. Add what went wrong after it.
+
 The entry carries JobHelper's own record of those minutes: calls to ResumeM-M
 that failed (route, status, what the server said), errors in the extension's
 code on the page, the red strips the card showed, and which actions ran —

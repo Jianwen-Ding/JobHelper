@@ -478,6 +478,26 @@ input.pair-code:focus-visible, input.pair-code:focus { outline: 2px solid var(--
   background: var(--panel-sunk); border: 1px solid var(--line-soft); border-radius: 8px;
   padding: 8px 10px; margin-bottom: 8px; font-size: 12px; color: var(--muted);
 }
+/*
+ * "Log an error", at the foot of that box (or of the step, before there is a
+ * box): quiet, and out of the chips' way — muted, small, set off on its own
+ * line at the end, as the editor's chip is, with its "!" mark.
+ */
+.log-error-row { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 6px; }
+.step > .log-error-row { margin-top: 8px; }
+.log-error-row .said { font-size: 11.5px; color: var(--warn); margin-right: auto; }
+button.log-error {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 0; background: none; box-shadow: none; padding: 2px 6px;
+  font-size: 11.5px; font-weight: 500; color: var(--muted);
+}
+button.log-error:hover { background: var(--bad-bg); color: var(--bad); }
+button.log-error:focus { outline: none; }
+button.log-error:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; color: var(--ink); }
+.log-error-mark {
+  display: inline-grid; place-items: center; width: 13px; height: 13px; border-radius: 50%;
+  border: 1.5px solid currentColor; font-size: 9px; font-weight: 700; line-height: 1;
+}
 .change .ba { display: grid; gap: 2px; margin-top: 3px; }
 .change .ba del, .change .ba ins {
   display: block; font-size: 12px; line-height: 1.45; text-decoration: none;
@@ -7811,6 +7831,8 @@ export function createCard({
                * as sent.
                */
               ...dragChips(),
+              // Last in the box, under the chips: see `drawLogError`.
+              drawLogError(),
             ])
           : null,
         h('div', { className: 'row' }, [
@@ -7907,6 +7929,8 @@ export function createCard({
         drawAutofillNote(),
         drawToKeep(),
         drawAttachNote(),
+        // No folder box yet: at the foot of the step instead, in the same place relative to it.
+        uploadFolder() ? null : drawLogError(),
       ]),
     );
 
@@ -9442,6 +9466,75 @@ export function createCard({
             },
           }),
         ]),
+      ),
+    ]);
+  }
+
+  /*
+   * "Log an error", in the step where most things go wrong in front of
+   * somebody: Autofill leaving a field it should have filled, Attach putting
+   * a file in the wrong box. The error log was only behind the toolbar
+   * button or Alt+Shift+E, which nobody finds in the moment.
+   *
+   * Pressing it opens the popup's form (or its window) with a draft that says
+   * where it came from — this step, the page's host, and what the step is
+   * saying now — and puts those same lines in the worker's automatic logs, so
+   * the entry has them whatever is typed over the draft. The card's own
+   * sentences only, never a value from the form. See `logError` in
+   * content.js and `openErrorLogFromCard` in the worker.
+   */
+  const LOG_ERROR_EVERY_MS = 2000;
+  let logErrorAt = 0;
+  let logErrorSaid = '';
+
+  /** What step 4 is saying now: the last Autofill's report and the last Attach's. */
+  function stepFourLines() {
+    return [state.autofillReport ? describeAutofill(state.autofillReport) : '', state.attachReport ? describeAttach(state.attachReport) : '']
+      .map((line) => String(line ?? '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+  }
+
+  /** "From the card — Fill in and file on boards.example.com: Filled 9 fields, …", in 300 characters at most. */
+  function logErrorDraft(lines) {
+    let host = '';
+    try {
+      host = location.hostname.replace(/^www\./, '');
+    } catch {
+      // No address to name.
+    }
+    const where = `From the card — Fill in and file${host ? ` on ${host}` : ''}`;
+    const draft = lines.length ? `${where}: ${lines.join(' ')}` : `${where}.`;
+    return draft.length > 300 ? `${draft.slice(0, 299).trimEnd()}…` : draft;
+  }
+
+  function drawLogError() {
+    return h('div', { className: 'log-error-row' }, [
+      logErrorSaid ? h('span', { className: 'said', role: 'status', textContent: logErrorSaid }) : null,
+      h(
+        'button',
+        {
+          className: 'log-error',
+          // One control across redraws, so focus stays on it: see `focusKey`.
+          dataset: { focus: 'log-error' },
+          title: 'Something went wrong here? Open the error log with this step’s report filled in, and add a screenshot',
+          onclick: async () => {
+            // A second press while the first is opening the form opens nothing more.
+            if (Date.now() - logErrorAt < LOG_ERROR_EVERY_MS) return;
+            logErrorAt = Date.now();
+            const lines = stepFourLines();
+            try {
+              await onAction('logError', { draft: logErrorDraft(lines), lines });
+              if (logErrorSaid) {
+                logErrorSaid = '';
+                draw();
+              }
+            } catch {
+              logErrorSaid = 'The error log would not open from here — use JobHelper’s toolbar button, or Alt+Shift+E.';
+              draw();
+            }
+          },
+        },
+        [h('span', { className: 'log-error-mark', 'aria-hidden': 'true', textContent: '!' }), h('span', { textContent: 'Log an error' })],
       ),
     ]);
   }

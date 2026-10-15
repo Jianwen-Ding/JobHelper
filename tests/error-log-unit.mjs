@@ -8,7 +8,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CARD_DRAFT_MAX,
   MAX_DESCRIPTION,
+  cardDraft,
   QUEUE_KEY,
   QUEUE_MAX,
   REFUSED_KEY,
@@ -252,4 +254,18 @@ test('an entry too large with its logs is sent again without them, keeping its w
   assert.equal(arrived[1].description.split('\n')[0], 'Queued one');
   assert.deepEqual(arrived[1].screenshots, [PNG]);
   assert.deepEqual(done.refusedEntries, []);
+});
+
+test('a draft from the card is a short line of text, and nothing else', () => {
+  assert.equal(CARD_DRAFT_MAX, 300);
+  assert.equal(cardDraft('From the card — Fill in and file on boards.example.com: Filled 9 fields.'), 'From the card — Fill in and file on boards.example.com: Filled 9 fields.');
+  // Control characters, newlines and bidi overrides become single spaces.
+  assert.equal(cardDraft('a\u0000b\nc\r\n\td\u001b[31me\u202ef\u0085g'), 'a b c d [31me f g');
+  // Cut to 300, at most, with an ellipsis.
+  const long = cardDraft(`From the card: ${'x'.repeat(1000)}`);
+  assert.equal(long.length, 300);
+  assert.ok(long.endsWith('…'));
+  // Anything that is not a string is no draft at all.
+  for (const not of [undefined, null, 42, { text: 'x' }, ['x'], 'data:image/png;base64,'.length]) assert.equal(cardDraft(not), '');
+  assert.equal(cardDraft('   \n\t  '), '');
 });
